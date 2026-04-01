@@ -1,0 +1,5 @@
+{
+  "name": "Terminal Logger",
+  "description": "A terminal-style application for logging user entries and syncing with Google Sheets.",
+  "requestFramePermissions": []
+}
