@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
-    "predeploy": "npm run build",
+    "predeploy": "npm run clean && npm run build",
     "deploy": "gh-pages -d dist",
     "preview": "vite preview",
     "clean": "rm -rf dist",
