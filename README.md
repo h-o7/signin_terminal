@@ -1,20 +1,34 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Sign-in Terminal
 
-# Run and deploy your AI Studio app
+This project is a terminal-based sign-in system that logs to Google Sheets.
 
-This contains everything you need to run your app locally.
+## Local Development
 
-View your app in AI Studio: https://ai.studio/apps/f0796e39-126c-4af8-8a16-2ba574d10817
+1.  Install dependencies:
+    ```bash
+    npm install
+    ```
+2.  Start the development server:
+    ```bash
+    npm run dev
+    ```
 
-## Run Locally
+## Deployment to GitHub Pages
 
-**Prerequisites:**  Node.js
+1.  Ensure your `vite.config.ts` has the correct `base` path:
+    ```typescript
+    base: '/signin_terminal/',
+    ```
+2.  Run the deployment script:
+    ```bash
+    npm run deploy
+    ```
+3.  In your GitHub repository settings, go to **Pages** and set the branch to `gh-pages`.
 
+## Troubleshooting
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+If you get `missing script: "deploy"`, make sure you have the latest version of `package.json` from AI Studio.
+Check that the `scripts` section contains:
+```json
+"deploy": "gh-pages -d dist"
+```
