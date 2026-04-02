@@ -41,28 +41,62 @@ export default function App() {
     },
   ]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [dataSource, setDataSource] = useState<'upload' | 'google_sheet'>(() => 
-    (localStorage.getItem('terminal_data_source') as 'upload' | 'google_sheet') || 'upload'
-  );
+  const [dataSource, setDataSource] = useState<'upload' | 'google_sheet'>(() => {
+    try {
+      return (localStorage.getItem('terminal_data_source') as 'upload' | 'google_sheet') || 'upload';
+    } catch (e) {
+      return 'upload';
+    }
+  });
   const [uploadedUserMap, setUploadedUserMap] = useState<UserMapping>(() => {
-    const saved = localStorage.getItem('terminal_user_map');
-    return saved ? JSON.parse(saved) : {};
+    try {
+      const saved = localStorage.getItem('terminal_user_map');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
   });
   const [remoteUserMap, setRemoteUserMap] = useState<UserMapping>(() => {
-    const saved = localStorage.getItem('terminal_remote_user_map');
-    return saved ? JSON.parse(saved) : {};
+    try {
+      const saved = localStorage.getItem('terminal_remote_user_map');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
   });
-  const [googleSheetCsvUrl, setGoogleSheetCsvUrl] = useState(() => localStorage.getItem('terminal_gsheet_csv_url') || '');
-  const [spreadsheetUrl, setSpreadsheetUrl] = useState(() => localStorage.getItem('terminal_sheet_url') || '');
-  const [webhookUrl, setWebhookUrl] = useState(() => localStorage.getItem('terminal_webhook_url') || '');
+  const [googleSheetCsvUrl, setGoogleSheetCsvUrl] = useState(() => {
+    try {
+      return localStorage.getItem('terminal_gsheet_csv_url') || '';
+    } catch (e) {
+      return '';
+    }
+  });
+  const [spreadsheetUrl, setSpreadsheetUrl] = useState(() => {
+    try {
+      return localStorage.getItem('terminal_sheet_url') || '';
+    } catch (e) {
+      return '';
+    }
+  });
+  const [webhookUrl, setWebhookUrl] = useState(() => {
+    try {
+      return localStorage.getItem('terminal_webhook_url') || '';
+    } catch (e) {
+      return '';
+    }
+  });
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'sent' | 'error'>('idle');
   const [lastSyncResult, setLastSyncResult] = useState<string | null>(null);
   const [queueSize, setQueueSize] = useState(0);
   const [secondsUntilFlush, setSecondsUntilFlush] = useState(60);
   const pendingLogsRef = useRef<{username: string, timestamp: string, status: string}[]>([]);
   const [userStatuses, setUserStatuses] = useState<UserStatusMap>(() => {
-    const saved = localStorage.getItem('terminal_user_statuses');
-    return saved ? JSON.parse(saved) : {};
+    try {
+      const saved = localStorage.getItem('terminal_user_statuses');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
   });
   
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -70,31 +104,45 @@ export default function App() {
 
   // Persistence
   useEffect(() => {
-    localStorage.setItem('terminal_user_map', JSON.stringify(uploadedUserMap));
+    try {
+      localStorage.setItem('terminal_user_map', JSON.stringify(uploadedUserMap));
+    } catch (e) {}
   }, [uploadedUserMap]);
 
   useEffect(() => {
-    localStorage.setItem('terminal_remote_user_map', JSON.stringify(remoteUserMap));
+    try {
+      localStorage.setItem('terminal_remote_user_map', JSON.stringify(remoteUserMap));
+    } catch (e) {}
   }, [remoteUserMap]);
 
   useEffect(() => {
-    localStorage.setItem('terminal_data_source', dataSource);
+    try {
+      localStorage.setItem('terminal_data_source', dataSource);
+    } catch (e) {}
   }, [dataSource]);
 
   useEffect(() => {
-    localStorage.setItem('terminal_gsheet_csv_url', googleSheetCsvUrl);
+    try {
+      localStorage.setItem('terminal_gsheet_csv_url', googleSheetCsvUrl);
+    } catch (e) {}
   }, [googleSheetCsvUrl]);
 
   useEffect(() => {
-    localStorage.setItem('terminal_sheet_url', spreadsheetUrl);
+    try {
+      localStorage.setItem('terminal_sheet_url', spreadsheetUrl);
+    } catch (e) {}
   }, [spreadsheetUrl]);
 
   useEffect(() => {
-    localStorage.setItem('terminal_webhook_url', webhookUrl);
+    try {
+      localStorage.setItem('terminal_webhook_url', webhookUrl);
+    } catch (e) {}
   }, [webhookUrl]);
 
   useEffect(() => {
-    localStorage.setItem('terminal_user_statuses', JSON.stringify(userStatuses));
+    try {
+      localStorage.setItem('terminal_user_statuses', JSON.stringify(userStatuses));
+    } catch (e) {}
   }, [userStatuses]);
 
   // Auto-scroll to bottom
