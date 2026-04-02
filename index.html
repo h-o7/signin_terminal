@@ -8,7 +8,9 @@
       body { background-color: black; color: #00ff00; margin: 0; padding: 0; }
     </style>
     <script>
+      console.log("[SYSTEM] HTML_LOADED");
       window.onerror = function(msg, url, lineNo, columnNo, error) {
+        console.error("[SYSTEM] RUNTIME_ERROR", msg, url, lineNo);
         var div = document.createElement('div');
         div.style.color = 'red';
         div.style.padding = '20px';
@@ -25,7 +27,7 @@
         [SYSTEM] INITIALIZING_TERMINAL...
       </div>
     </div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="/src/main.tsx" onload="console.log('[SYSTEM] SCRIPT_LOADED')" onerror="console.error('[SYSTEM] SCRIPT_LOAD_ERROR')"></script>
   </body>
 </html>
 
