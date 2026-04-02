@@ -31,6 +31,7 @@ interface UserStatusMap {
 }
 
 export default function App() {
+  console.log("[SYSTEM] APP_COMPONENT_MOUNTING");
   const [input, setInput] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([
     {
@@ -360,8 +361,11 @@ export default function App() {
     }
     
     try {
-      // Use the server-side proxy to bypass CORS
-      const proxyUrl = `/api/proxy-csv?url=${encodeURIComponent(targetUrl)}`;
+      // On static hosts like GitHub Pages, we must fetch directly because there is no backend proxy.
+      // Google Sheets CSV export supports CORS if the sheet is "Published to the web".
+      const isStaticHost = window.location.hostname.includes('github.io');
+      const proxyUrl = isStaticHost ? targetUrl : `/api/proxy-csv?url=${encodeURIComponent(targetUrl)}`;
+      
       const response = await fetch(proxyUrl);
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const csvText = await response.text();
