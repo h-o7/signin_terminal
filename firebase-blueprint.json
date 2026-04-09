@@ -1,0 +1,38 @@
+{
+  "entities": {
+    "user": {
+      "title": "User",
+      "description": "A user in the terminal system",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string", "description": "The user's unique identifier" },
+        "displayName": { "type": "string", "description": "The user's readable name" },
+        "lastStatus": { "type": "string", "enum": ["logged in", "logged out"], "description": "Last known status" },
+        "lastTimestamp": { "type": "string", "format": "date-time", "description": "When the status last changed" }
+      },
+      "required": ["username", "displayName"]
+    },
+    "log": {
+      "title": "Log Entry",
+      "description": "A sign-in or sign-out event",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "displayName": { "type": "string" },
+        "status": { "type": "string", "enum": ["logged in", "logged out"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["username", "status", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{username}": {
+      "schema": "user",
+      "description": "User profile and current status"
+    },
+    "/logs/{logId}": {
+      "schema": "log",
+      "description": "History of all terminal events"
+    }
+  }
+}

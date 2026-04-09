@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, X, Upload, Link as LinkIcon, Terminal as TerminalIcon, ChevronRight } from 'lucide-react';
+import { Settings, X, Upload, Link as LinkIcon, Terminal as TerminalIcon, ChevronRight, LogIn, LogOut, User as UserIcon } from 'lucide-react';
 import Papa from 'papaparse';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { db, auth, signIn, signOut } from './firebase';
+import { collection, doc, setDoc, addDoc, onSnapshot, query, orderBy, limit, getDoc, serverTimestamp } from 'firebase/firestore';
+import { onAuthStateChanged, User } from 'firebase/auth';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -32,6 +35,8 @@ interface UserStatusMap {
 
 export default function App() {
   console.log("[SYSTEM] APP_COMPONENT_MOUNTING");
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
   const [input, setInput] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([
     {
@@ -42,11 +47,11 @@ export default function App() {
     },
   ]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [dataSource, setDataSource] = useState<'upload' | 'google_sheet'>(() => {
+  const [dataSource, setDataSource] = useState<'upload' | 'google_sheet' | 'firebase'>(() => {
     try {
-      return (localStorage.getItem('terminal_data_source') as 'upload' | 'google_sheet') || 'upload';
+      return (localStorage.getItem('terminal_data_source') as 'upload' | 'google_sheet' | 'firebase') || 'firebase';
     } catch (e) {
-      return 'upload';
+      return 'firebase';
     }
   });
   const [uploadedUserMap, setUploadedUserMap] = useState<UserMapping>(() => {
@@ -91,14 +96,67 @@ export default function App() {
   const [queueSize, setQueueSize] = useState(0);
   const [secondsUntilFlush, setSecondsUntilFlush] = useState(60);
   const pendingLogsRef = useRef<{username: string, timestamp: string, status: string}[]>([]);
-  const [userStatuses, setUserStatuses] = useState<UserStatusMap>(() => {
-    try {
-      const saved = localStorage.getItem('terminal_user_statuses');
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) {
-      return {};
-    }
-  });
+  const [userStatuses, setUserStatuses] = useState<UserStatusMap>({});
+
+  // Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setIsAuthReady(true);
+      if (u) {
+        setLogs(prev => [...prev, {
+          id: `auth-${Date.now()}`,
+          timestamp: new Date(),
+          message: `Authenticated as ${u.email}`,
+          type: 'system'
+        }]);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Real-time Firestore Listeners
+  useEffect(() => {
+    if (!user) return;
+
+    // Listen to user statuses for real-time toggle logic
+    const unsubscribeUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+      const statuses: UserStatusMap = {};
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        statuses[doc.id] = {
+          lastStatus: data.lastStatus,
+          lastDate: data.lastTimestamp?.split('T')[0] || ''
+        };
+      });
+      setUserStatuses(statuses);
+    });
+
+    // Listen to recent logs
+    const q = query(collection(db, 'logs'), orderBy('timestamp', 'desc'), limit(50));
+    const unsubscribeLogs = onSnapshot(q, (snapshot) => {
+      const firestoreLogs: LogEntry[] = snapshot.docs.reverse().map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
+          message: `${data.displayName || data.username} ${data.status} at ${data.timestamp}`,
+          type: 'output'
+        };
+      });
+      
+      // Keep the init log and merge with firestore logs
+      setLogs(prev => {
+        const initLog = prev.find(l => l.id === 'init');
+        return initLog ? [initLog, ...firestoreLogs] : firestoreLogs;
+      });
+    });
+
+    return () => {
+      unsubscribeUsers();
+      unsubscribeLogs();
+    };
+  }, [user]);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -284,60 +342,56 @@ export default function App() {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = async (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && input.length > 0) {
-      const timestamp = new Date();
-      const formattedTime = format(timestamp, 'yyyy-MM-dd HH:mm:ss');
-      const currentDate = format(timestamp, 'yyyy-MM-dd');
-      
-      // Add input log
-      const newLogs: LogEntry[] = [
-        ...logs,
-        {
-          id: Math.random().toString(36).substr(2, 9),
-          timestamp,
-          message: `> ${input}`,
-          type: 'input',
-        },
-      ];
-
-      // Determine status (logged in vs logged out)
-      const userStatus = userStatuses[input];
-      let nextStatus: 'logged in' | 'logged out' = 'logged in';
-
-      if (userStatus && userStatus.lastDate === currentDate) {
-        // Toggle if same day
-        nextStatus = userStatus.lastStatus === 'logged in' ? 'logged out' : 'logged in';
-      } else {
-        // First time today, always 'logged in'
-        nextStatus = 'logged in';
+      if (!user) {
+        alert("Please sign in to use the terminal.");
+        return;
       }
 
-      // Update status map
-      setUserStatuses(prev => ({
-        ...prev,
-        [input]: {
-          lastStatus: nextStatus,
-          lastDate: currentDate
-        }
-      }));
-
-      // Process output
-      const username = userMap[input] || `User_${input}`;
-      const outputMessage = `${username} ${nextStatus} at ${formattedTime}`;
+      const timestamp = new Date();
+      const formattedTime = format(timestamp, "yyyy-MM-dd'T'HH:mm:ss'Z'");
+      const currentDate = format(timestamp, 'yyyy-MM-dd');
       
-      newLogs.push({
-        id: Math.random().toString(36).substr(2, 9),
-        timestamp,
-        message: outputMessage,
-        type: 'output',
-      });
-
-      setLogs(newLogs);
+      const userInput = input;
       setInput('');
-      
-      // Log to spreadsheet (Queued for 60s batch)
-      queueLog(username, formattedTime, nextStatus);
+
+      // Determine status (logged in vs logged out)
+      const currentStatus = userStatuses[userInput];
+      let nextStatus: 'logged in' | 'logged out' = 'logged in';
+
+      if (currentStatus && currentStatus.lastDate === currentDate) {
+        nextStatus = currentStatus.lastStatus === 'logged in' ? 'logged out' : 'logged in';
+      }
+
+      const username = userMap[userInput] || `User_${userInput}`;
+
+      try {
+        // Update User Status in Firestore
+        await setDoc(doc(db, 'users', userInput), {
+          username: userInput,
+          displayName: username,
+          lastStatus: nextStatus,
+          lastTimestamp: formattedTime
+        }, { merge: true });
+
+        // Add Log Entry in Firestore
+        await addDoc(collection(db, 'logs'), {
+          username: userInput,
+          displayName: username,
+          status: nextStatus,
+          timestamp: formattedTime
+        });
+
+      } catch (error) {
+        console.error("Firestore Error:", error);
+        setLogs(prev => [...prev, {
+          id: `err-${Date.now()}`,
+          timestamp: new Date(),
+          message: `[ERROR] Failed to save entry: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          type: 'system'
+        }]);
+      }
     }
   };
 
@@ -484,19 +538,46 @@ export default function App() {
     <div className="min-h-screen bg-black text-green-500 font-mono flex flex-col p-4 relative" onClick={handleTerminalClick}>
       {/* Header */}
       <div className="flex justify-between items-center mb-4 border-b border-green-900 pb-2">
-        <div className="flex items-center gap-2">
-          <TerminalIcon size={20} />
-          <span className="font-bold tracking-wider">CMD_TERMINAL_V1.0</span>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <TerminalIcon size={20} />
+            <span className="font-bold tracking-wider">CMD_TERMINAL_V1.0</span>
+          </div>
+          {user && (
+            <div className="flex items-center gap-2 text-[10px] bg-green-900/20 px-2 py-1 rounded border border-green-900/50">
+              <UserIcon size={12} />
+              <span>{user.email}</span>
+            </div>
+          )}
         </div>
-        <button 
-          onClick={(e) => {
-            e.stopPropagation();
-            setIsSettingsOpen(true);
-          }}
-          className="p-1 hover:bg-green-900/30 rounded transition-colors"
-        >
-          <Settings size={20} />
-        </button>
+        <div className="flex items-center gap-2">
+          {!user ? (
+            <button 
+              onClick={(e) => { e.stopPropagation(); signIn(); }}
+              className="flex items-center gap-2 px-3 py-1 bg-green-900 text-black text-[10px] font-bold hover:bg-green-400 transition-colors rounded"
+            >
+              <LogIn size={14} />
+              SIGN_IN
+            </button>
+          ) : (
+            <button 
+              onClick={(e) => { e.stopPropagation(); signOut(); }}
+              className="flex items-center gap-2 px-3 py-1 border border-green-900 text-green-700 text-[10px] hover:bg-green-900/20 transition-colors rounded"
+            >
+              <LogOut size={14} />
+              SIGN_OUT
+            </button>
+          )}
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsSettingsOpen(true);
+            }}
+            className="p-1 hover:bg-green-900/30 rounded transition-colors"
+          >
+            <Settings size={20} />
+          </button>
+        </div>
       </div>
 
       {/* Terminal Output */}
@@ -557,11 +638,20 @@ export default function App() {
               {/* Data Source Selection */}
               <div className="space-y-3">
                 <label className="text-sm font-semibold block text-green-400">USER_DATA_SOURCE</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
+                  <button 
+                    onClick={() => setDataSource('firebase')}
+                    className={cn(
+                      "p-2 text-[10px] border transition-colors",
+                      dataSource === 'firebase' ? "bg-green-900 border-green-400 text-black font-bold" : "border-green-900 text-green-700"
+                    )}
+                  >
+                    FIREBASE (REAL-TIME)
+                  </button>
                   <button 
                     onClick={() => setDataSource('upload')}
                     className={cn(
-                      "p-2 text-xs border transition-colors",
+                      "p-2 text-[10px] border transition-colors",
                       dataSource === 'upload' ? "bg-green-900 border-green-400 text-black font-bold" : "border-green-900 text-green-700"
                     )}
                   >
@@ -570,16 +660,26 @@ export default function App() {
                   <button 
                     onClick={() => setDataSource('google_sheet')}
                     className={cn(
-                      "p-2 text-xs border transition-colors",
+                      "p-2 text-[10px] border transition-colors",
                       dataSource === 'google_sheet' ? "bg-green-900 border-green-400 text-black font-bold" : "border-green-900 text-green-700"
                     )}
                   >
-                    GOOGLE_SHEET_CSV
+                    GOOGLE_SHEET
                   </button>
                 </div>
               </div>
 
               {/* CSV Import (Conditional) */}
+              {dataSource === 'firebase' && (
+                <div className="space-y-3 animate-in fade-in duration-300">
+                  <label className="text-sm font-semibold block text-green-400">FIREBASE_REALTIME_MODE</label>
+                  <p className="text-[10px] text-green-700">
+                    Using Firestore for real-time user verification and logging. 
+                    User mappings are managed directly in the database.
+                  </p>
+                </div>
+              )}
+
               {dataSource === 'upload' ? (
                 <div className="space-y-3 animate-in fade-in duration-300">
                   <div className="flex justify-between items-center">
