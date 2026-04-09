@@ -27,6 +27,7 @@ interface UserMapping {
 interface UserStatus {
   lastStatus: 'logged in' | 'logged out';
   lastDate: string; // YYYY-MM-DD
+  lastFullTimestamp: string; // ISO string
 }
 
 interface UserStatusMap {
@@ -86,7 +87,8 @@ export default function App() {
         const data = doc.data();
         statuses[doc.id] = {
           lastStatus: data.lastStatus,
-          lastDate: data.lastTimestamp?.split('T')[0] || ''
+          lastDate: data.lastTimestamp?.split('T')[0] || '',
+          lastFullTimestamp: data.lastTimestamp || ''
         };
       });
       setUserStatuses(statuses);
@@ -159,14 +161,30 @@ export default function App() {
       }
 
       const timestamp = new Date();
-      const formattedTime = format(timestamp, "yyyy-MM-dd'T'HH:mm:ss'Z'");
+      const formattedTime = timestamp.toISOString();
       const currentDate = format(timestamp, 'yyyy-MM-dd');
       
       const userInput = input;
       setInput('');
 
-      // Determine status (logged in vs logged out)
+      // Rate limiting: Check if the same user scanned within the last 2 seconds
       const currentStatus = userStatuses[userInput];
+      if (currentStatus && currentStatus.lastFullTimestamp) {
+        const lastScanTime = new Date(currentStatus.lastFullTimestamp).getTime();
+        const timeDiff = timestamp.getTime() - lastScanTime;
+        
+        if (timeDiff < 2000) {
+          setLogs(prev => [...prev, {
+            id: `rate-limit-${Date.now()}`,
+            timestamp: new Date(),
+            message: `[SYSTEM] Scan ignored: Minimum 2s interval required for user ${userInput}`,
+            type: 'system'
+          }]);
+          return;
+        }
+      }
+
+      // Determine status (logged in vs logged out)
       let nextStatus: 'logged in' | 'logged out' = 'logged in';
 
       if (currentStatus && currentStatus.lastDate === currentDate) {
@@ -293,7 +311,8 @@ export default function App() {
   const clearScreen = (e: React.MouseEvent) => {
     e.stopPropagation();
     const now = Date.now();
-    setClearTimestamp(now);
+    // Use a slightly older timestamp to ensure events happening in the same second/ms are caught
+    setClearTimestamp(now - 100);
     setLogs([{
       id: `init-${now}`,
       timestamp: new Date(),
