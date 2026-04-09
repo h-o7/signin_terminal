@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, X, Upload, Link as LinkIcon, Terminal as TerminalIcon, ChevronRight, LogIn, LogOut, User as UserIcon } from 'lucide-react';
+import { Download, Settings, X, Upload, Link as LinkIcon, Terminal as TerminalIcon, ChevronRight, LogIn, LogOut, User as UserIcon } from 'lucide-react';
 import Papa from 'papaparse';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { db, auth, signIn, signOut } from './firebase';
-import { collection, doc, setDoc, addDoc, onSnapshot, query, orderBy, limit, getDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, setDoc, addDoc, onSnapshot, query, orderBy, limit, getDoc, getDocs, serverTimestamp } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 
 // Utility for tailwind classes
@@ -251,6 +251,44 @@ export default function App() {
     document.body.removeChild(link);
   };
 
+  const exportLogsToCSV = async () => {
+    if (!user) return;
+    
+    try {
+      const q = query(collection(db, 'logs'), orderBy('timestamp', 'desc'));
+      const snapshot = await getDocs(q);
+      
+      const data = snapshot.docs.map(doc => {
+        const d = doc.data();
+        return {
+          Username: d.username,
+          DisplayName: d.displayName,
+          Status: d.status,
+          Timestamp: d.timestamp
+        };
+      });
+
+      if (data.length === 0) {
+        alert("No logs found to export.");
+        return;
+      }
+
+      const csv = Papa.unparse(data);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `terminal_logs_${format(new Date(), 'yyyy-MM-dd')}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (error) {
+      console.error("Export Error:", error);
+      alert("Failed to export logs.");
+    }
+  };
+
   return (
     <div className="min-h-screen bg-black text-green-500 font-mono flex flex-col p-4 relative" onClick={handleTerminalClick}>
       {/* Header */}
@@ -397,6 +435,21 @@ export default function App() {
                     <span className="text-[10px] text-green-400 font-mono">{Object.keys(uploadedUserMap).length}</span>
                   </div>
                 </div>
+              </div>
+
+              {/* Data Export Section */}
+              <div className="space-y-3">
+                <label className="text-sm font-semibold block text-green-400">DATA_EXPORT</label>
+                <button 
+                  onClick={exportLogsToCSV}
+                  className="w-full flex items-center justify-center gap-2 bg-blue-900/20 border border-blue-900 text-blue-400 p-4 rounded-lg hover:bg-blue-900/40 transition-colors font-bold text-xs"
+                >
+                  <Download size={18} />
+                  EXPORT_ALL_LOGS_TO_CSV
+                </button>
+                <p className="text-[10px] text-blue-900 italic">
+                  This will download a complete history of all sign-in/out events from the database.
+                </p>
               </div>
             </div>
 
