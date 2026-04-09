@@ -300,6 +300,10 @@ export default function App() {
       message: 'Terminal cleared. Ready for input...',
       type: 'system',
     }]);
+    // Return focus to input
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 10);
   };
 
   return (
