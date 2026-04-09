@@ -17,21 +17,6 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.get("/api/proxy-csv", async (req, res) => {
-    const url = req.query.url as string;
-    if (!url) return res.status(400).send("URL is required");
-    
-    try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`Fetch failed: ${response.statusText}`);
-      const text = await response.text();
-      res.send(text);
-    } catch (error) {
-      console.error("Proxy error:", error);
-      res.status(500).send("Failed to fetch remote CSV");
-    }
-  });
-
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
