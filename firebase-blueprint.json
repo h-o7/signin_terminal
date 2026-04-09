@@ -26,13 +26,13 @@
     }
   },
   "firestore": {
-    "/users/{username}": {
+    "/terminals/{userId}/mappings/{username}": {
       "schema": "user",
-      "description": "User profile and current status"
+      "description": "User profile and current status for a specific terminal instance"
     },
-    "/logs/{logId}": {
+    "/terminals/{userId}/logs/{logId}": {
       "schema": "log",
-      "description": "History of all terminal events"
+      "description": "History of all terminal events for a specific terminal instance"
     }
   }
 }

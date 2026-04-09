@@ -80,7 +80,7 @@ export default function App() {
     if (!user) return;
 
     // Listen to user statuses for real-time toggle logic
-    const unsubscribeUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+    const unsubscribeUsers = onSnapshot(collection(db, 'terminals', user.uid, 'mappings'), (snapshot) => {
       const statuses: UserStatusMap = {};
       snapshot.forEach((doc) => {
         const data = doc.data();
@@ -93,7 +93,7 @@ export default function App() {
     });
 
     // Listen to recent logs
-    const q = query(collection(db, 'logs'), orderBy('timestamp', 'desc'), limit(50));
+    const q = query(collection(db, 'terminals', user.uid, 'logs'), orderBy('timestamp', 'desc'), limit(50));
     const unsubscribeLogs = onSnapshot(q, (snapshot) => {
       const firestoreLogs: LogEntry[] = snapshot.docs.reverse().map(doc => {
         const data = doc.data();
@@ -177,7 +177,7 @@ export default function App() {
 
       try {
         // Update User Status in Firestore
-        await setDoc(doc(db, 'users', userInput), {
+        await setDoc(doc(db, 'terminals', user.uid, 'mappings', userInput), {
           username: userInput,
           displayName: username,
           lastStatus: nextStatus,
@@ -185,7 +185,7 @@ export default function App() {
         }, { merge: true });
 
         // Add Log Entry in Firestore
-        await addDoc(collection(db, 'logs'), {
+        await addDoc(collection(db, 'terminals', user.uid, 'logs'), {
           username: userInput,
           displayName: username,
           status: nextStatus,
@@ -256,7 +256,7 @@ export default function App() {
     if (!user) return;
     
     try {
-      const q = query(collection(db, 'logs'), orderBy('timestamp', 'desc'));
+      const q = query(collection(db, 'terminals', user.uid, 'logs'), orderBy('timestamp', 'desc'));
       const snapshot = await getDocs(q);
       
       const data = snapshot.docs.map(doc => {
