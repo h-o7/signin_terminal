@@ -320,11 +320,21 @@ export default function App() {
     if (!user) return;
     try {
       const response = await fetch(`/api/auth/google/url?login_hint=${encodeURIComponent(user.email || '')}`);
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Server responded with ${response.status}: ${errorText}`);
+      
+      let data;
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        data = await response.json();
+      } else {
+        const text = await response.text();
+        throw new Error(`Server returned non-JSON response (${response.status}): ${text.slice(0, 100)}...`);
       }
-      const { url } = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || `Server responded with ${response.status}`);
+      }
+      
+      const { url } = data;
       
       // Pass userId in state so server knows who to associate the token with
       const authUrl = `${url}&state=${user.uid}`;

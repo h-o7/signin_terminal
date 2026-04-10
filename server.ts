@@ -28,7 +28,9 @@ const db = process.env.VITE_FIREBASE_DATABASE_ID
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  `${process.env.APP_URL}/api/auth/google/callback`
+  process.env.APP_URL 
+    ? `${process.env.APP_URL}/api/auth/google/callback`
+    : "http://localhost:3000/api/auth/google/callback"
 );
 
 async function startServer() {
@@ -45,6 +47,9 @@ async function startServer() {
   // Google OAuth URL
   app.get("/api/auth/google/url", (req, res) => {
     try {
+      if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+        throw new Error("Google OAuth credentials are missing in .env file.");
+      }
       const { login_hint } = req.query;
       const url = oauth2Client.generateAuthUrl({
         access_type: "offline",
@@ -55,7 +60,7 @@ async function startServer() {
       res.json({ url });
     } catch (error) {
       console.error("Error generating Auth URL:", error);
-      res.status(500).send(error instanceof Error ? error.message : "Failed to generate Auth URL");
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to generate Auth URL" });
     }
   });
 
@@ -175,6 +180,11 @@ async function startServer() {
     // In production, add authentication here
     await runMonthlyExport();
     res.json({ status: "Export triggered" });
+  });
+
+  // 404 handler for API routes to prevent falling through to Vite
+  app.all("/api/*", (req, res) => {
+    res.status(404).json({ error: `API route ${req.method} ${req.url} not found` });
   });
 
   // Vite middleware for development
