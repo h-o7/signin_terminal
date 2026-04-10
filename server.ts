@@ -8,21 +8,39 @@ import { initializeApp, getApps, getApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import dotenv from "dotenv";
 import Papa from "papaparse";
+import fs from "fs";
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Helper to get database ID from firebase.json
+const getDatabaseIdFromConfig = () => {
+  try {
+    const firebaseJsonPath = path.join(process.cwd(), "firebase.json");
+    if (fs.existsSync(firebaseJsonPath)) {
+      const config = JSON.parse(fs.readFileSync(firebaseJsonPath, "utf8"));
+      return config.firestore?.database;
+    }
+  } catch (err) {
+    console.error("Error reading firebase.json:", err);
+  }
+  return null;
+};
+
 // Initialize Firebase Admin
+const projectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
+const databaseId = process.env.VITE_FIREBASE_DATABASE_ID || getDatabaseIdFromConfig();
+
+console.log(`[Firebase Admin] Initializing with Project ID: ${projectId}, Database ID: ${databaseId}`);
+
 const firebaseApp = getApps().length === 0 
-  ? initializeApp({
-      projectId: process.env.VITE_FIREBASE_PROJECT_ID,
-    })
+  ? initializeApp({ projectId })
   : getApp();
 
-const db = process.env.VITE_FIREBASE_DATABASE_ID 
-  ? getFirestore(firebaseApp, process.env.VITE_FIREBASE_DATABASE_ID)
+const db = databaseId 
+  ? getFirestore(firebaseApp, databaseId)
   : getFirestore(firebaseApp);
 
 const getCallbackUrl = () => {
