@@ -4,7 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { google } from "googleapis";
 import cron from "node-cron";
-import admin from "firebase-admin";
+import { initializeApp, getApps, getApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import dotenv from "dotenv";
 import Papa from "papaparse";
@@ -15,15 +15,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Initialize Firebase Admin
-if (!admin.apps.length) {
-  admin.initializeApp({
-    projectId: process.env.VITE_FIREBASE_PROJECT_ID,
-  });
-}
+const firebaseApp = getApps().length === 0 
+  ? initializeApp({
+      projectId: process.env.VITE_FIREBASE_PROJECT_ID,
+    })
+  : getApp();
 
 const db = process.env.VITE_FIREBASE_DATABASE_ID 
-  ? getFirestore(process.env.VITE_FIREBASE_DATABASE_ID)
-  : getFirestore();
+  ? getFirestore(firebaseApp, process.env.VITE_FIREBASE_DATABASE_ID)
+  : getFirestore(firebaseApp);
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
