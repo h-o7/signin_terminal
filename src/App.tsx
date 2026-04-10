@@ -48,6 +48,7 @@ export default function App() {
     },
   ]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isDriveConnected, setIsDriveConnected] = useState(false);
   const [uploadedUserMap, setUploadedUserMap] = useState<UserMapping>(() => {
     try {
       const saved = localStorage.getItem('terminal_user_map');
@@ -113,9 +114,17 @@ export default function App() {
       });
     });
 
+    // Listen to user settings (for Drive connection status)
+    const unsubscribeSettings = onSnapshot(doc(db, 'terminals', user.uid), (doc) => {
+      if (doc.exists()) {
+        setIsDriveConnected(!!doc.data().googleDriveRefreshToken);
+      }
+    });
+
     return () => {
       unsubscribeUsers();
       unsubscribeLogs();
+      unsubscribeSettings();
     };
   }, [user]);
   
@@ -307,6 +316,32 @@ export default function App() {
     }
   };
 
+  const connectGoogleDrive = async () => {
+    if (!user) return;
+    try {
+      const response = await fetch(`/api/auth/google/url?login_hint=${encodeURIComponent(user.email || '')}`);
+      const { url } = await response.json();
+      
+      // Pass userId in state so server knows who to associate the token with
+      const authUrl = `${url}&state=${user.uid}`;
+      
+      window.open(authUrl, 'google_auth', 'width=600,height=700');
+    } catch (error) {
+      console.error("Auth URL Error:", error);
+      alert("Failed to start Google Drive connection.");
+    }
+  };
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'GOOGLE_DRIVE_AUTH_SUCCESS') {
+        alert("Google Drive connected successfully! Monthly auto-export is now active.");
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
   return (
     <div className="min-h-screen bg-black text-green-500 font-mono flex flex-col p-4 relative" onClick={handleTerminalClick}>
       {/* Header */}
@@ -468,6 +503,40 @@ export default function App() {
                 <p className="text-[10px] text-blue-900 italic">
                   This will download a complete history of all sign-in/out events from the database.
                 </p>
+              </div>
+
+              {/* Google Drive Automation Section */}
+              <div className="space-y-3">
+                <label className="text-sm font-semibold block text-green-400">AUTOMATION (GOOGLE_DRIVE)</label>
+                <div className="bg-green-900/10 border border-green-900 p-4 rounded-lg space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-green-700">STATUS:</span>
+                    <span className={cn(
+                      "text-xs font-bold",
+                      isDriveConnected ? "text-green-400" : "text-red-400"
+                    )}>
+                      {isDriveConnected ? "CONNECTED" : "NOT_CONNECTED"}
+                    </span>
+                  </div>
+                  
+                  {!isDriveConnected ? (
+                    <button 
+                      onClick={connectGoogleDrive}
+                      className="w-full bg-white text-black py-2 rounded text-xs font-bold hover:bg-gray-200 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <LinkIcon size={14} />
+                      CONNECT_GOOGLE_DRIVE
+                    </button>
+                  ) : (
+                    <div className="text-[10px] text-green-400 bg-green-900/20 p-2 rounded border border-green-900/30 text-center">
+                      ✓ Monthly auto-export is ACTIVE
+                    </div>
+                  )}
+                  
+                  <p className="text-[9px] text-green-800 italic">
+                    When connected, logs will be automatically exported to your Google Drive on the last day of every month, and the database will be cleared.
+                  </p>
+                </div>
               </div>
             </div>
 
