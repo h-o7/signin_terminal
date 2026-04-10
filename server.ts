@@ -25,12 +25,15 @@ const db = process.env.VITE_FIREBASE_DATABASE_ID
   ? getFirestore(firebaseApp, process.env.VITE_FIREBASE_DATABASE_ID)
   : getFirestore(firebaseApp);
 
+const getCallbackUrl = () => {
+  const baseUrl = process.env.APP_URL?.replace(/\/$/, "") || "http://localhost:3000";
+  return `${baseUrl}/api/auth/google/callback`;
+};
+
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  process.env.APP_URL 
-    ? `${process.env.APP_URL}/api/auth/google/callback`
-    : "http://localhost:3000/api/auth/google/callback"
+  getCallbackUrl()
 );
 
 async function startServer() {
