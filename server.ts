@@ -15,6 +15,20 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Helper to get project ID from .firebaserc
+const getProjectIdFromRC = () => {
+  try {
+    const rcPath = path.join(process.cwd(), ".firebaserc");
+    if (fs.existsSync(rcPath)) {
+      const config = JSON.parse(fs.readFileSync(rcPath, "utf8"));
+      return config.projects?.default;
+    }
+  } catch (err) {
+    console.error("Error reading .firebaserc:", err);
+  }
+  return null;
+};
+
 // Helper to get database ID from firebase.json
 const getDatabaseIdFromConfig = () => {
   try {
@@ -30,13 +44,15 @@ const getDatabaseIdFromConfig = () => {
 };
 
 // Initialize Firebase Admin
-const projectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
+const projectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || getProjectIdFromRC();
 const databaseId = process.env.VITE_FIREBASE_DATABASE_ID || getDatabaseIdFromConfig();
 
-console.log(`[Firebase Admin] Initializing with Project ID: ${projectId}, Database ID: ${databaseId}`);
+console.log(`[Firebase Admin] Initializing...`);
+console.log(` - Project ID: ${projectId || 'default'}`);
+console.log(` - Database ID: ${databaseId || 'default'}`);
 
 const firebaseApp = getApps().length === 0 
-  ? initializeApp({ projectId })
+  ? initializeApp()
   : getApp();
 
 const db = databaseId 
@@ -71,6 +87,27 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  // Test Firestore connectivity
+  app.get("/api/test-db", async (req, res) => {
+    try {
+      const testDoc = await db.collection("test").doc("connectivity").get();
+      res.json({ 
+        status: "success", 
+        projectId, 
+        databaseId: databaseId || "default",
+        exists: testDoc.exists 
+      });
+    } catch (error) {
+      console.error("Firestore Connectivity Test Failed:", error);
+      res.status(500).json({ 
+        status: "error", 
+        message: error instanceof Error ? error.message : String(error),
+        projectId,
+        databaseId: databaseId || "default"
+      });
+    }
+  });
+
   // Google OAuth URL
   app.get("/api/auth/google/url", (req, res) => {
     try {
@@ -93,9 +130,29 @@ async function startServer() {
 
   // Google OAuth Callback
   app.get("/api/auth/google/callback", async (req, res) => {
-    const { code, state } = req.query;
+    const { code, state, error } = req.query;
+
+    if (error === "access_denied") {
+      console.log("OAuth Callback: User denied access.");
+      return res.send(`
+        <html>
+          <body>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'GOOGLE_DRIVE_AUTH_CANCELLED' }, '*');
+                window.close();
+              } else {
+                window.location.href = '/';
+              }
+            </script>
+            <p>Connection cancelled. You can close this window.</p>
+          </body>
+        </html>
+      `);
+    }
+
     if (!code) {
-      console.error("OAuth Callback Error: No code provided");
+      console.error("OAuth Callback Error: No code provided", req.query);
       return res.status(400).send("No code provided");
     }
 
@@ -108,12 +165,17 @@ async function startServer() {
       const userId = state as string;
 
       if (userId && tokens.refresh_token) {
-        console.log(`OAuth Callback: Saving refresh token for user ${userId}`);
-        await db.collection("terminals").doc(userId).set({
-          googleDriveRefreshToken: tokens.refresh_token,
-          autoExportEnabled: true
-        }, { merge: true });
-        console.log("OAuth Callback: Token saved to Firestore.");
+        console.log(`OAuth Callback: Saving refresh token for user ${userId} to database ${databaseId || 'default'}`);
+        try {
+          await db.collection("terminals").doc(userId).set({
+            googleDriveRefreshToken: tokens.refresh_token,
+            autoExportEnabled: true
+          }, { merge: true });
+          console.log("OAuth Callback: Token saved to Firestore successfully.");
+        } catch (dbError) {
+          console.error("Firestore Save Error:", dbError);
+          throw dbError;
+        }
       } else if (!tokens.refresh_token) {
         console.warn("OAuth Callback: No refresh_token received. Ensure 'prompt: consent' is used.");
       }

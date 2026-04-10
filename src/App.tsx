@@ -350,6 +350,8 @@ export default function App() {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'GOOGLE_DRIVE_AUTH_SUCCESS') {
         alert("Google Drive connected successfully! Monthly auto-export is now active.");
+      } else if (event.data?.type === 'GOOGLE_DRIVE_AUTH_CANCELLED') {
+        alert("Google Drive connection was cancelled.");
       }
     };
     window.addEventListener('message', handleMessage);
