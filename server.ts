@@ -76,22 +76,28 @@ async function startServer() {
   // Google OAuth Callback
   app.get("/api/auth/google/callback", async (req, res) => {
     const { code, state } = req.query;
-    if (!code) return res.status(400).send("No code provided");
+    if (!code) {
+      console.error("OAuth Callback Error: No code provided");
+      return res.status(400).send("No code provided");
+    }
 
     try {
+      console.log("OAuth Callback: Exchanging code for tokens...");
       const { tokens } = await oauth2Client.getToken(code as string);
+      console.log("OAuth Callback: Tokens received successfully.");
       
       // We need the userId to associate the token. 
-      // In a real app, we'd use a session or a temporary state.
-      // For this demo, we'll expect the userId in the 'state' parameter or similar.
-      // Let's assume the client passes userId in state.
       const userId = state as string;
 
       if (userId && tokens.refresh_token) {
+        console.log(`OAuth Callback: Saving refresh token for user ${userId}`);
         await db.collection("terminals").doc(userId).set({
           googleDriveRefreshToken: tokens.refresh_token,
           autoExportEnabled: true
         }, { merge: true });
+        console.log("OAuth Callback: Token saved to Firestore.");
+      } else if (!tokens.refresh_token) {
+        console.warn("OAuth Callback: No refresh_token received. Ensure 'prompt: consent' is used.");
       }
 
       res.send(`
@@ -110,8 +116,8 @@ async function startServer() {
         </html>
       `);
     } catch (error) {
-      console.error("OAuth Error:", error);
-      res.status(500).send("Authentication failed");
+      console.error("OAuth Callback Error:", error);
+      res.status(500).send(`Authentication failed: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   });
 
