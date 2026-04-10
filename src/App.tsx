@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Trash2, Download, Settings, X, Upload, Link as LinkIcon, Terminal as TerminalIcon, ChevronRight, LogIn, LogOut, User as UserIcon } from 'lucide-react';
+import { Download, Settings, X, Upload, Link as LinkIcon, Terminal as TerminalIcon, ChevronRight, LogIn, LogOut, User as UserIcon } from 'lucide-react';
 import Papa from 'papaparse';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
@@ -48,7 +48,6 @@ export default function App() {
     },
   ]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [clearTimestamp, setClearTimestamp] = useState<number>(0);
   const [uploadedUserMap, setUploadedUserMap] = useState<UserMapping>(() => {
     try {
       const saved = localStorage.getItem('terminal_user_map');
@@ -95,7 +94,7 @@ export default function App() {
     });
 
     // Listen to recent logs
-    const q = query(collection(db, 'terminals', user.uid, 'logs'), orderBy('timestamp', 'desc'), limit(50));
+    const q = query(collection(db, 'terminals', user.uid, 'logs'), orderBy('timestamp', 'desc'), limit(10));
     const unsubscribeLogs = onSnapshot(q, (snapshot) => {
       const firestoreLogs: LogEntry[] = snapshot.docs.reverse().map(doc => {
         const data = doc.data();
@@ -105,11 +104,11 @@ export default function App() {
           message: `${data.displayName || data.username} ${data.status} at ${data.timestamp}`,
           type: 'output' as const
         };
-      }).filter(log => log.timestamp.getTime() > clearTimestamp);
+      });
       
       // Keep the init log and merge with firestore logs
       setLogs(prev => {
-        const initLog = prev.find(l => l.id.startsWith('init'));
+        const initLog = prev.find(l => l.id === 'init');
         return initLog ? [initLog, ...firestoreLogs] : firestoreLogs;
       });
     });
@@ -118,7 +117,7 @@ export default function App() {
       unsubscribeUsers();
       unsubscribeLogs();
     };
-  }, [user, clearTimestamp]);
+  }, [user]);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -308,23 +307,6 @@ export default function App() {
     }
   };
 
-  const clearScreen = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const now = Date.now();
-    // Use a slightly older timestamp to ensure events happening in the same second/ms are caught
-    setClearTimestamp(now - 100);
-    setLogs([{
-      id: `init-${now}`,
-      timestamp: new Date(),
-      message: 'Terminal cleared. Ready for input...',
-      type: 'system',
-    }]);
-    // Return focus to input
-    setTimeout(() => {
-      inputRef.current?.focus();
-    }, 10);
-  };
-
   return (
     <div className="min-h-screen bg-black text-green-500 font-mono flex flex-col p-4 relative" onClick={handleTerminalClick}>
       {/* Header */}
@@ -342,16 +324,6 @@ export default function App() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          {user && (
-            <button 
-              onClick={clearScreen}
-              className="flex items-center gap-2 px-3 py-1 border border-green-900 text-green-700 text-[10px] hover:bg-green-900/20 transition-colors rounded"
-              title="Clear Screen"
-            >
-              <Trash2 size={14} />
-              CLEAR
-            </button>
-          )}
           {!user ? (
             <button 
               onClick={(e) => { e.stopPropagation(); signIn(); }}
