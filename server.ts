@@ -10,58 +10,34 @@ import dotenv from "dotenv";
 import Papa from "papaparse";
 import fs from "fs";
 
+import firebaseConfig from "./firebase-applet-config.json";
+
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Helper to get project ID from .firebaserc
-const getProjectIdFromRC = () => {
-  try {
-    const rcPath = path.join(process.cwd(), ".firebaserc");
-    if (fs.existsSync(rcPath)) {
-      const config = JSON.parse(fs.readFileSync(rcPath, "utf8"));
-      return config.projects?.default;
-    }
-  } catch (err) {
-    console.error("Error reading .firebaserc:", err);
-  }
-  return null;
-};
-
-// Helper to get database ID from firebase.json
-const getDatabaseIdFromConfig = () => {
-  try {
-    const firebaseJsonPath = path.join(process.cwd(), "firebase.json");
-    if (fs.existsSync(firebaseJsonPath)) {
-      const config = JSON.parse(fs.readFileSync(firebaseJsonPath, "utf8"));
-      return config.firestore?.database;
-    }
-  } catch (err) {
-    console.error("Error reading firebase.json:", err);
-  }
-  return null;
-};
-
 // Initialize Firebase Admin
-const projectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || getProjectIdFromRC();
-const databaseId = process.env.VITE_FIREBASE_DATABASE_ID || getDatabaseIdFromConfig();
+const projectId = firebaseConfig.projectId;
+const databaseId = firebaseConfig.firestoreDatabaseId;
 
 console.log(`[Firebase Admin] Initializing...`);
-console.log(` - Project ID: ${projectId || 'default'}`);
-console.log(` - Database ID: ${databaseId || 'default'}`);
+console.log(` - Project ID: ${projectId}`);
+console.log(` - Database ID: ${databaseId}`);
 
 const firebaseApp = getApps().length === 0 
-  ? initializeApp()
+  ? initializeApp({
+      projectId: projectId
+    })
   : getApp();
 
-const db = databaseId 
-  ? getFirestore(firebaseApp, databaseId)
-  : getFirestore(firebaseApp);
+const db = getFirestore(firebaseApp, databaseId);
 
 const getCallbackUrl = () => {
   const baseUrl = process.env.APP_URL?.replace(/\/$/, "") || "http://localhost:3000";
-  return `${baseUrl}/api/auth/google/callback`;
+  const callbackUrl = `${baseUrl}/api/auth/google/callback`;
+  console.log(`[OAuth] Using Callback URL: ${callbackUrl}`);
+  return callbackUrl;
 };
 
 const oauth2Client = new google.auth.OAuth2(
@@ -129,7 +105,7 @@ async function startServer() {
   });
 
   // Google OAuth Callback
-  app.get("/api/auth/google/callback", async (req, res) => {
+  app.get(["/api/auth/google/callback", "/api/auth/google/callback/"], async (req, res) => {
     const { code, state, error } = req.query;
 
     if (error === "access_denied") {
