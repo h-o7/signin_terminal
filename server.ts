@@ -44,14 +44,19 @@ async function startServer() {
 
   // Google OAuth URL
   app.get("/api/auth/google/url", (req, res) => {
-    const { login_hint } = req.query;
-    const url = oauth2Client.generateAuthUrl({
-      access_type: "offline",
-      scope: ["https://www.googleapis.com/auth/drive.file"],
-      prompt: "consent",
-      login_hint: login_hint as string,
-    });
-    res.json({ url });
+    try {
+      const { login_hint } = req.query;
+      const url = oauth2Client.generateAuthUrl({
+        access_type: "offline",
+        scope: ["https://www.googleapis.com/auth/drive.file"],
+        prompt: "consent",
+        login_hint: login_hint as string,
+      });
+      res.json({ url });
+    } catch (error) {
+      console.error("Error generating Auth URL:", error);
+      res.status(500).send(error instanceof Error ? error.message : "Failed to generate Auth URL");
+    }
   });
 
   // Google OAuth Callback

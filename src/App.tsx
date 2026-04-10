@@ -320,6 +320,10 @@ export default function App() {
     if (!user) return;
     try {
       const response = await fetch(`/api/auth/google/url?login_hint=${encodeURIComponent(user.email || '')}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Server responded with ${response.status}: ${errorText}`);
+      }
       const { url } = await response.json();
       
       // Pass userId in state so server knows who to associate the token with
@@ -328,7 +332,7 @@ export default function App() {
       window.open(authUrl, 'google_auth', 'width=600,height=700');
     } catch (error) {
       console.error("Auth URL Error:", error);
-      alert("Failed to start Google Drive connection.");
+      alert(`Failed to start Google Drive connection: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
