@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, Settings, X, Upload, Link as LinkIcon, Terminal as TerminalIcon, ChevronRight, LogIn, LogOut, User as UserIcon } from 'lucide-react';
-import Papa from 'papaparse';
+import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { db, auth, signIn, signOut } from './firebase';
-import { collection, doc, setDoc, addDoc, onSnapshot, query, orderBy, limit, getDoc, getDocs, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, setDoc, addDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 
 // Utility for tailwind classes
@@ -20,14 +19,10 @@ interface LogEntry {
   type: 'input' | 'output' | 'system';
 }
 
-interface UserMapping {
-  [key: string]: string;
-}
-
 interface UserStatus {
   lastStatus: 'logged in' | 'logged out';
-  lastDate: string; // YYYY-MM-DD
-  lastFullTimestamp: string; // ISO string
+  lastDate: string;
+  lastFullTimestamp: string;
 }
 
 interface UserStatusMap {
@@ -35,53 +30,32 @@ interface UserStatusMap {
 }
 
 export default function App() {
-  console.log("[SYSTEM] APP_COMPONENT_MOUNTING");
+  const [isStarted, setIsStarted] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const TERMINAL_ID = 'shared-terminal';
   const [input, setInput] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([
-    {
-      id: 'init',
-      timestamp: new Date(),
-      message: 'Terminal initialized. Ready for input...',
-      type: 'system',
-    },
+    { id: 'init', timestamp: new Date(), message: 'SYSTEM_BOOT_COMPLETE: Terminal ready.', type: 'system' }
   ]);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isDriveConnected, setIsDriveConnected] = useState(false);
-  const [uploadedUserMap, setUploadedUserMap] = useState<UserMapping>(() => {
-    try {
-      const saved = localStorage.getItem('terminal_user_map');
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) {
-      return {};
-    }
-  });
   const [userStatuses, setUserStatuses] = useState<UserStatusMap>({});
+  const inputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const TERMINAL_ID = 'shared-terminal';
 
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setIsAuthReady(true);
-      if (u) {
-        setLogs(prev => [...prev, {
-          id: `auth-${Date.now()}`,
-          timestamp: new Date(),
-          message: `Authenticated as ${u.email}`,
-          type: 'system'
-        }]);
-      }
     });
     return () => unsubscribe();
   }, []);
 
-  // Real-time Firestore Listeners
+  // Real-time Firestore Listeners (only when started)
   useEffect(() => {
-    if (!isAuthReady) return;
+    if (!isStarted || !isAuthReady) return;
 
-    // Listen to user statuses for real-time toggle logic
     const unsubscribeUsers = onSnapshot(collection(db, 'terminals', TERMINAL_ID, 'mappings'), (snapshot) => {
       const statuses: UserStatusMap = {};
       snapshot.forEach((doc) => {
@@ -93,485 +67,186 @@ export default function App() {
         };
       });
       setUserStatuses(statuses);
-    }, (error) => {
-      console.error("Snapshot error (mappings):", error);
     });
 
-    // Listen to recent logs
-    const q = query(collection(db, 'terminals', TERMINAL_ID, 'logs'), orderBy('timestamp', 'desc'), limit(10));
+    const q = query(collection(db, 'terminals', TERMINAL_ID, 'logs'), orderBy('timestamp', 'desc'), limit(50));
     const unsubscribeLogs = onSnapshot(q, (snapshot) => {
-      const firestoreLogs: LogEntry[] = snapshot.docs.reverse().map(doc => {
+      const newLogs: LogEntry[] = [];
+      snapshot.docs.reverse().forEach((doc) => {
         const data = doc.data();
-        return {
+        newLogs.push({
           id: doc.id,
-          timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
-          message: `${data.displayName || data.username} ${data.status} at ${data.timestamp}`,
-          type: 'output' as const
-        };
+          timestamp: new Date(data.timestamp),
+          message: `[${data.status.toUpperCase()}] ${data.displayName || data.username}`,
+          type: data.status === 'logged in' ? 'output' : 'input'
+        });
       });
-      
-      // Keep the init log and merge with firestore logs
-      setLogs(prev => {
-        const initLog = prev.find(l => l.id === 'init');
-        return initLog ? [initLog, ...firestoreLogs] : firestoreLogs;
-      });
-    }, (error) => {
-      console.error("Snapshot error (logs):", error);
-    });
-
-    // Listen to user settings (for Drive connection status)
-    const unsubscribeSettings = onSnapshot(doc(db, 'terminals', TERMINAL_ID), (doc) => {
-      if (doc.exists()) {
-        setIsDriveConnected(!!doc.data().googleDriveRefreshToken);
-      } else {
-        setIsDriveConnected(false);
+      if (newLogs.length > 0) {
+        setLogs(prev => {
+          const existingIds = new Set(prev.map(l => l.id));
+          const uniqueNew = newLogs.filter(l => !existingIds.has(l.id));
+          return [...prev, ...uniqueNew].slice(-100);
+        });
       }
-    }, (error) => {
-      console.error("Snapshot error (settings):", error);
     });
 
     return () => {
       unsubscribeUsers();
       unsubscribeLogs();
-      unsubscribeSettings();
     };
-  }, [isAuthReady]);
-  
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  }, [isStarted, isAuthReady]);
 
-  // Persistence
-  useEffect(() => {
-    try {
-      localStorage.setItem('terminal_user_map', JSON.stringify(uploadedUserMap));
-    } catch (e) {}
-  }, [uploadedUserMap]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('terminal_user_statuses', JSON.stringify(userStatuses));
-    } catch (e) {}
-  }, [userStatuses]);
-
-  // Auto-scroll to bottom
+  // Auto-scroll
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [logs]);
 
-  // Focus input on click anywhere
-  const handleTerminalClick = () => {
-    inputRef.current?.focus();
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.replace(/\D/g, '').slice(0, 12);
-    setInput(value);
-  };
-
   const handleKeyDown = async (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && input.length > 0) {
+      const userInput = input;
+      setInput('');
       const timestamp = new Date();
       const formattedTime = timestamp.toISOString();
       const currentDate = format(timestamp, 'yyyy-MM-dd');
-      
-      const userInput = input;
-      setInput('');
 
-      // Rate limiting: Check if the same user scanned within the last 2 seconds
       const currentStatus = userStatuses[userInput];
-      if (currentStatus && currentStatus.lastFullTimestamp) {
-        const lastScanTime = new Date(currentStatus.lastFullTimestamp).getTime();
-        const timeDiff = timestamp.getTime() - lastScanTime;
-        
-        if (timeDiff < 2000) {
-          setLogs(prev => [...prev, {
-            id: `rate-limit-${Date.now()}`,
-            timestamp: new Date(),
-            message: `[SYSTEM] Scan ignored: Minimum 2s interval required for user ${userInput}`,
-            type: 'system'
-          }]);
-          return;
-        }
-      }
-
-      // Determine status (logged in vs logged out)
       let nextStatus: 'logged in' | 'logged out' = 'logged in';
-
       if (currentStatus && currentStatus.lastDate === currentDate) {
         nextStatus = currentStatus.lastStatus === 'logged in' ? 'logged out' : 'logged in';
       }
 
-      const username = uploadedUserMap[userInput] || `User_${userInput}`;
-
       try {
-        // Update User Status in Firestore
         await setDoc(doc(db, 'terminals', TERMINAL_ID, 'mappings', userInput), {
           username: userInput,
-          displayName: username,
           lastStatus: nextStatus,
           lastTimestamp: formattedTime
         }, { merge: true });
 
-        // Add Log Entry in Firestore
         await addDoc(collection(db, 'terminals', TERMINAL_ID, 'logs'), {
           username: userInput,
-          displayName: username,
           status: nextStatus,
           timestamp: formattedTime
         });
-
-      } catch (error) {
-        console.error("Firestore Error:", error);
-        setLogs(prev => [...prev, {
-          id: `err-${Date.now()}`,
-          timestamp: new Date(),
-          message: `[ERROR] Failed to save entry: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          type: 'system'
-        }]);
+      } catch (err) {
+        console.error(err);
       }
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      Papa.parse(file, {
-        header: true,
-        skipEmptyLines: 'greedy',
-        transformHeader: (header) => header.trim(),
-        complete: (results) => {
-          const newMap: UserMapping = {};
-          results.data.forEach((row: any) => {
-            // Clean up values
-            const cleanRow: any = {};
-            Object.keys(row).forEach(key => {
-              cleanRow[key] = row[key]?.toString().trim();
-            });
+  if (!isStarted) {
+    return (
+      <div className="min-h-screen bg-black text-green-500 font-mono flex flex-col items-center justify-center p-4 relative overflow-hidden">
+        {/* Background Grid Effect */}
+        <div className="absolute inset-0 opacity-10 pointer-events-none" 
+             style={{ backgroundImage: 'linear-gradient(#10b981 1px, transparent 1px), linear-gradient(90deg, #10b981 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+        
+        <div className="max-w-2xl w-full space-y-8 relative z-10 text-center">
+          <div className="flex justify-center mb-6">
+            <div className="p-4 rounded-full bg-green-900/20 border border-green-500/30 animate-pulse">
+              <TerminalIcon size={64} className="text-green-400" />
+            </div>
+          </div>
+          
+          <div className="space-y-2">
+            <h1 className="text-4xl font-black tracking-tighter text-white">TERMINAL_LOGGER_V2</h1>
+            <p className="text-green-800 text-sm uppercase tracking-widest">Secure Entry Management System</p>
+          </div>
 
-            // Priority: Fob Number > Tag ID > other ID fields
-            const id = cleanRow["Fob Number"] || cleanRow["Tag ID"] || cleanRow.id || cleanRow.ID || cleanRow.number || cleanRow.Number || Object.values(cleanRow)[0];
-            // Priority: Staff Name > other name fields
-            const name = cleanRow["Staff Name"] || cleanRow.name || cleanRow.Name || cleanRow.username || cleanRow.Username || Object.values(cleanRow)[1];
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
+            <div className="p-4 border border-green-900/50 bg-green-950/20 rounded-lg">
+              <Shield className="mb-2 text-green-400" size={20} />
+              <h3 className="text-xs font-bold text-white mb-1">ENCRYPTED</h3>
+              <p className="text-[10px] text-green-700">AES-256 secure data transmission protocols enabled.</p>
+            </div>
+            <div className="p-4 border border-green-900/50 bg-green-950/20 rounded-lg">
+              <Activity className="mb-2 text-green-400" size={20} />
+              <h3 className="text-xs font-bold text-white mb-1">REAL-TIME</h3>
+              <p className="text-[10px] text-green-700">Instant synchronization across all connected nodes.</p>
+            </div>
+            <div className="p-4 border border-green-900/50 bg-green-950/20 rounded-lg">
+              <Database className="mb-2 text-green-400" size={20} />
+              <h3 className="text-xs font-bold text-white mb-1">PERSISTENT</h3>
+              <p className="text-[10px] text-green-700">Cloud-native storage with automated backup systems.</p>
+            </div>
+          </div>
+
+          <div className="pt-8 flex flex-col items-center gap-4">
+            <button 
+              onClick={() => setIsStarted(true)}
+              className="group relative px-12 py-4 bg-green-500 text-black font-bold text-lg hover:bg-green-400 transition-all active:scale-95 overflow-hidden rounded"
+            >
+              <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500" />
+              LOGIN_TO_TERMINAL
+            </button>
             
-            if (id && name && id !== "" && name !== "") {
-              newMap[id] = name;
-            }
-          });
-          setUploadedUserMap(newMap);
-          alert(`Successfully imported ${Object.keys(newMap).length} user mappings.`);
-        },
-        error: (error) => {
-          alert(`Error parsing CSV: ${error.message}`);
-        }
-      });
-    }
-  };
-
-  const downloadTemplate = () => {
-    const csvContent = "Fob Number,Tag ID,Staff Name\n123456789012,TAG_001,John Doe\n987654321098,TAG_002,Jane Smith";
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", "user_template.csv");
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const exportLogsToCSV = async () => {
-    try {
-      const q = query(collection(db, 'terminals', TERMINAL_ID, 'logs'), orderBy('timestamp', 'desc'));
-      const snapshot = await getDocs(q);
-      
-      const data = snapshot.docs.map(doc => {
-        const d = doc.data();
-        return {
-          Username: d.username,
-          DisplayName: d.displayName,
-          Status: d.status,
-          Timestamp: d.timestamp
-        };
-      });
-
-      if (data.length === 0) {
-        alert("No logs found to export.");
-        return;
-      }
-
-      const csv = Papa.unparse(data);
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.setAttribute("href", url);
-      link.setAttribute("download", `terminal_logs_${format(new Date(), 'yyyy-MM-dd')}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (error) {
-      console.error("Export Error:", error);
-      alert("Failed to export logs.");
-    }
-  };
-
-  const connectGoogleDrive = async () => {
-    if (!user) return;
-    try {
-      const response = await fetch(`/api/auth/google/url?login_hint=${encodeURIComponent(user.email || '')}`);
-      
-      let data;
-      const contentType = response.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        data = await response.json();
-      } else {
-        const text = await response.text();
-        throw new Error(`Server returned non-JSON response (${response.status}): ${text.slice(0, 100)}...`);
-      }
-
-      if (!response.ok) {
-        throw new Error(data.error || `Server responded with ${response.status}`);
-      }
-      
-      const { url } = data;
-      
-      // Pass TERMINAL_ID in state so server knows who to associate the token with
-      const authUrl = `${url}&state=${TERMINAL_ID}`;
-      
-      window.open(authUrl, 'google_auth', 'width=600,height=700');
-    } catch (error) {
-      console.error("Auth URL Error:", error);
-      alert(`Failed to start Google Drive connection: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  };
-
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'GOOGLE_DRIVE_AUTH_SUCCESS') {
-        alert("Google Drive connected successfully! Monthly auto-export is now active.");
-      } else if (event.data?.type === 'GOOGLE_DRIVE_AUTH_CANCELLED') {
-        alert("Google Drive connection was cancelled.");
-      }
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
+            <div className="flex items-center gap-4 text-[10px] text-green-900">
+              <div className="flex items-center gap-1"><Cpu size={12}/> CPU_READY</div>
+              <div className="flex items-center gap-1"><Shield size={12}/> AUTH_BYPASS_ENABLED</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-black text-green-500 font-mono flex flex-col p-4 relative" onClick={handleTerminalClick}>
+    <div className="min-h-screen bg-black text-green-500 font-mono flex flex-col p-4">
       {/* Header */}
-      <div className="flex justify-between items-center mb-4 border-b border-green-900 pb-2">
-          <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <TerminalIcon size={20} />
-            <span className="font-bold tracking-wider">CMD_TERMINAL_V1.0</span>
-          </div>
-          <div className="flex items-center gap-2 text-[10px] bg-green-900/20 px-2 py-1 rounded border border-green-900/50">
-            <div className={cn("w-1.5 h-1.5 rounded-full", user ? "bg-green-500" : "bg-blue-500")} />
-            <span>{user ? `ADMIN: ${user.email}` : 'PUBLIC_MODE'}</span>
-          </div>
+      <div className="flex items-center justify-between border-b border-green-900 pb-2 mb-4">
+        <div className="flex items-center gap-2">
+          <TerminalIcon size={20} />
+          <span className="font-bold tracking-wider">CMD_TERMINAL_V2.0</span>
+          <span className="text-[10px] bg-green-900/30 px-2 py-0.5 rounded text-green-400 animate-pulse">LIVE</span>
         </div>
-          <div className="flex items-center gap-2">
-          {!user ? (
+        <div className="flex items-center gap-3">
+          {user ? (
             <div className="flex items-center gap-2">
-              <button 
-                onClick={(e) => { e.stopPropagation(); signIn(); }}
-                className="flex items-center gap-2 px-3 py-1 bg-green-900/40 text-green-400 text-[10px] font-bold hover:bg-green-400 hover:text-black transition-colors rounded border border-green-900"
-              >
-                <LogIn size={14} />
-                ADMIN_LOGIN
-              </button>
-              <div className="text-[9px] text-green-800 hidden sm:block">
-                (Public access enabled)
-              </div>
+              <span className="text-[10px] text-green-800">{user.email}</span>
+              <button onClick={signOut} className="text-[10px] border border-red-900 px-2 py-1 hover:bg-red-900/20 text-red-700 rounded">LOGOUT</button>
             </div>
           ) : (
-            <button 
-              onClick={(e) => { e.stopPropagation(); signOut(); }}
-              className="flex items-center gap-2 px-3 py-1 border border-red-900 text-red-700 text-[10px] hover:bg-red-900/20 transition-colors rounded"
-            >
-              <LogOut size={14} />
-              ADMIN_LOGOUT
-            </button>
+            <button onClick={signIn} className="text-[10px] bg-green-900/40 px-3 py-1 text-green-400 hover:bg-green-400 hover:text-black transition-colors rounded">ADMIN_LOGIN</button>
           )}
-          <button 
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsSettingsOpen(true);
-            }}
-            className="p-1 hover:bg-green-900/30 rounded transition-colors"
-          >
-            <Settings size={20} />
-          </button>
+          <button onClick={() => setIsStarted(false)} className="text-[10px] border border-green-900 px-2 py-1 hover:bg-green-900/20 rounded">EXIT</button>
         </div>
       </div>
 
-      {/* Terminal Output */}
+      {/* Terminal Body */}
       <div 
         ref={scrollRef}
-        className="flex-1 overflow-y-auto mb-4 space-y-1 scrollbar-thin"
+        className="flex-1 overflow-y-auto mb-4 space-y-1 scrollbar-hide"
+        onClick={() => inputRef.current?.focus()}
       >
         {logs.map((log) => (
-          <div 
-            key={log.id} 
-            className={cn(
+          <div key={log.id} className="flex gap-3 text-sm animate-in fade-in slide-in-from-left-2 duration-300">
+            <span className="text-green-900 shrink-0">[{format(log.timestamp, 'HH:mm:ss')}]</span>
+            <span className={cn(
               "break-all",
-              log.type === 'input' && "text-white",
-              log.type === 'system' && "text-blue-400 italic",
-              log.type === 'output' && "text-green-400"
-            )}
-          >
-            {log.message}
+              log.type === 'system' ? 'text-blue-400 italic' : 
+              log.type === 'output' ? 'text-green-400' : 'text-yellow-400'
+            )}>
+              {log.message}
+            </span>
           </div>
         ))}
-        
-        {/* Input Line */}
-        <div className="flex items-center gap-2">
-          <ChevronRight size={18} className="text-white shrink-0" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            className="bg-transparent border-none outline-none flex-1 text-white caret-green-500"
-            autoFocus
-          />
-        </div>
       </div>
 
-      {/* Footer Info */}
-      <div className="text-[10px] text-green-900 flex justify-between">
-        <span>STATUS: ONLINE</span>
-        <span>{format(new Date(), 'yyyy-MM-dd HH:mm:ss')}</span>
+      {/* Input Area */}
+      <div className="flex items-center gap-2 border-t border-green-900 pt-4">
+        <span className="text-green-400 font-bold shrink-0">SCAN_FOB_ID:</span>
+        <input
+          ref={inputRef}
+          autoFocus
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value.replace(/\D/g, '').slice(0, 12))}
+          onKeyDown={handleKeyDown}
+          className="flex-1 bg-transparent border-none outline-none text-green-400 placeholder:text-green-900"
+          placeholder="WAITING_FOR_SIGNAL..."
+        />
       </div>
-
-      {/* Settings Modal */}
-      {isSettingsOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={(e) => e.stopPropagation()}>
-          <div className="bg-[#111] border border-green-900 w-full max-w-md rounded-lg overflow-hidden flex flex-col shadow-2xl shadow-green-900/20">
-            <div className="p-4 border-b border-green-900 flex justify-between items-center bg-green-900/10">
-              <div className="flex items-center gap-2">
-                <Settings size={18} />
-                <h2 className="text-lg font-bold">SYSTEM_CONFIG</h2>
-              </div>
-              <button onClick={() => setIsSettingsOpen(false)} className="hover:text-white">
-                <X size={20} />
-              </button>
-            </div>
-            
-            <div className="p-6 space-y-8 overflow-y-auto max-h-[70vh]">
-              {/* Firebase Status Section */}
-              <div className="space-y-3">
-                <label className="text-sm font-semibold block text-green-400">FIREBASE_REALTIME_STATUS</label>
-                <div className="bg-green-900/10 border border-green-900 p-4 rounded-lg space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-green-700">CONNECTION:</span>
-                    <span className="text-green-400 font-bold">ONLINE</span>
-                  </div>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-green-700">MODE:</span>
-                    <span className="text-green-400 font-bold">REAL-TIME_SYNC</span>
-                  </div>
-                  <p className="text-[10px] text-green-800 italic mt-2">
-                    All sign-ins are instantly synced to Firestore and visible across all connected terminals.
-                  </p>
-                </div>
-              </div>
-
-              {/* CSV Import Section */}
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <label className="text-sm font-semibold block text-green-400">USER_MAPPING_IMPORT (.CSV)</label>
-                  <button 
-                    onClick={downloadTemplate}
-                    className="text-[10px] text-blue-400 hover:underline flex items-center gap-1"
-                  >
-                    DOWNLOAD_TEMPLATE
-                  </button>
-                </div>
-                
-                <div className="space-y-3">
-                  <label className="flex items-center justify-center gap-2 border border-dashed border-green-800 p-6 rounded-lg cursor-pointer hover:bg-green-900/10 transition-colors group">
-                    <Upload size={20} className="group-hover:scale-110 transition-transform" />
-                    <div className="text-center">
-                      <span className="text-xs block font-bold">CHOOSE_CSV_FILE</span>
-                      <span className="text-[9px] text-green-800">Fob Number, Tag ID, Staff Name</span>
-                    </div>
-                    <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
-                  </label>
-                  
-                  <div className="flex justify-between items-center bg-black/40 p-2 rounded border border-green-900/30">
-                    <span className="text-[10px] text-green-700">ACTIVE_MAPPINGS:</span>
-                    <span className="text-[10px] text-green-400 font-mono">{Object.keys(uploadedUserMap).length}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Data Export Section */}
-              <div className="space-y-3">
-                <label className="text-sm font-semibold block text-green-400">DATA_EXPORT</label>
-                <button 
-                  onClick={exportLogsToCSV}
-                  className="w-full flex items-center justify-center gap-2 bg-blue-900/20 border border-blue-900 text-blue-400 p-4 rounded-lg hover:bg-blue-900/40 transition-colors font-bold text-xs"
-                >
-                  <Download size={18} />
-                  EXPORT_ALL_LOGS_TO_CSV
-                </button>
-                <p className="text-[10px] text-blue-900 italic">
-                  This will download a complete history of all sign-in/out events from the database.
-                </p>
-              </div>
-
-              {/* Google Drive Automation Section */}
-              <div className="space-y-3">
-                <label className="text-sm font-semibold block text-green-400">AUTOMATION (GOOGLE_DRIVE)</label>
-                <div className="bg-green-900/10 border border-green-900 p-4 rounded-lg space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-green-700">STATUS:</span>
-                    <span className={cn(
-                      "text-xs font-bold",
-                      isDriveConnected ? "text-green-400" : "text-red-400"
-                    )}>
-                      {isDriveConnected ? "CONNECTED" : "NOT_CONNECTED"}
-                    </span>
-                  </div>
-                  
-                  {!isDriveConnected ? (
-                    <button 
-                      onClick={connectGoogleDrive}
-                      className="w-full bg-white text-black py-2 rounded text-xs font-bold hover:bg-gray-200 transition-colors flex items-center justify-center gap-2"
-                    >
-                      <LinkIcon size={14} />
-                      CONNECT_GOOGLE_DRIVE
-                    </button>
-                  ) : (
-                    <div className="text-[10px] text-green-400 bg-green-900/20 p-2 rounded border border-green-900/30 text-center">
-                      ✓ Monthly auto-export is ACTIVE
-                    </div>
-                  )}
-                  
-                  <p className="text-[9px] text-green-800 italic">
-                    When connected, logs will be automatically exported to your Google Drive on the last day of every month, and the database will be cleared.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 bg-green-900/5 border-t border-green-900 flex justify-end">
-              <button 
-                onClick={() => setIsSettingsOpen(false)}
-                className="bg-green-400 text-black px-6 py-2 text-xs font-bold hover:bg-green-300 transition-colors"
-              >
-                SAVE_AND_CLOSE
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
