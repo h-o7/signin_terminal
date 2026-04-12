@@ -3,9 +3,8 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "homepage": "https://h-o7.github.io/signin_terminal/",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "node server.ts",
     "build": "vite build",
     "predeploy": "npm run clean && npm run build",
     "deploy": "gh-pages -d dist",

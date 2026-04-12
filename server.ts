@@ -1,93 +1,123 @@
 import express from "express";
-console.log("[Server] SCRIPT_LOADED");
-import { createServer as createViteServer } from "vite";
+import http from "http";
 import path from "path";
 import { fileURLToPath } from "url";
-import { google } from "googleapis";
-import cron from "node-cron";
-import { initializeApp, getApps, getApp } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
-import dotenv from "dotenv";
-import Papa from "papaparse";
 import fs from "fs";
+import dotenv from "dotenv";
+
+const logFile = path.join(process.cwd(), "server.log");
+const log = (msg: string) => {
+  const entry = `${new Date().toISOString()} - ${msg}\n`;
+  console.log(msg);
+  try {
+    fs.appendFileSync(logFile, entry);
+  } catch (e) {}
+};
+
+log("[Server] SCRIPT_LOADED");
+
+process.on('uncaughtException', (err) => {
+  log(`[Server] Uncaught Exception: ${err.message}\n${err.stack}`);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  log(`[Server] Unhandled Rejection at: ${promise} reason: ${reason}`);
+});
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const app = express();
+const PORT = 3000;
+
+// 1. Register health routes IMMEDIATELY
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", initialized: !!db, time: new Date().toISOString() });
+});
+
+app.get("/healthz", (req, res) => {
+  res.send("ok");
+});
+
+// 2. Start listening IMMEDIATELY
+app.listen(PORT, "0.0.0.0", () => {
+  log(`[Server] SUCCESS: Server is listening on port ${PORT}`);
+});
+
+// 3. Request logging
+app.use((req, res, next) => {
+  log(`[Server] ${new Date().toISOString()} - ${req.method} ${req.url}`);
+  log(`[Headers] ${JSON.stringify(req.headers)}`);
+  next();
+});
+
 // Load Firebase Config
-console.log("[Server] Loading Firebase config...");
+log("[Server] Loading Firebase config...");
 const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
 if (!fs.existsSync(firebaseConfigPath)) {
-  console.error(`[Server] Firebase config NOT FOUND at ${firebaseConfigPath}`);
+  log(`[Server] Firebase config NOT FOUND at ${firebaseConfigPath}`);
   process.exit(1);
 }
 const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
-console.log("[Server] Firebase config loaded successfully");
+log("[Server] Firebase config loaded successfully");
 
-// Initialize Firebase Admin
+// Initialize Firebase Admin variables
 const projectId = firebaseConfig.projectId;
 const databaseId = firebaseConfig.firestoreDatabaseId;
 
-console.log(`[Firebase Admin] Initializing...`);
-console.log(` - Project ID: ${projectId}`);
-console.log(` - Database ID: ${databaseId}`);
-
-const firebaseApp = getApps().length === 0 
-  ? initializeApp({
-      projectId: projectId
-    })
-  : getApp();
-
-const db = getFirestore(firebaseApp, databaseId);
+let db: any;
+let oauth2Client: any;
 
 const getCallbackUrl = () => {
   const baseUrl = process.env.APP_URL?.replace(/\/$/, "") || "http://localhost:3000";
   const callbackUrl = `${baseUrl}/api/auth/google/callback`;
-  console.log(`[OAuth] Using Callback URL: ${callbackUrl}`);
   return callbackUrl;
 };
 
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  getCallbackUrl()
-);
-
 async function startServer() {
-  console.log("[Server] Starting server...");
-  console.log(`[Server] NODE_ENV: ${process.env.NODE_ENV}`);
-  const app = express();
-  const PORT = 3000;
+  log("[Server] Starting server initialization...");
+  log(`[Server] APP_URL: ${process.env.APP_URL}`);
+  log(`[Server] PORT ENV: ${process.env.PORT}`);
+  
+  try {
+    const { google } = await import("googleapis");
+    log("[OAuth] Initializing client...");
+    oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      getCallbackUrl()
+    );
+    log("[OAuth] Client initialized");
+  } catch (err) {
+    log(`[OAuth] Initialization failed: ${err}`);
+  }
 
-  // Request logging
-  app.use((req, res, next) => {
-    console.log(`[Server] ${new Date().toISOString()} - ${req.method} ${req.url}`);
-    next();
-  });
+  // Initialize Firebase Admin
+  try {
+    const { initializeApp, getApps, getApp } = await import("firebase-admin/app");
+    const { getFirestore } = await import("firebase-admin/firestore");
+    
+    log(`[Firebase Admin] Initializing...`);
+    log(` - Project ID: ${projectId}`);
+    log(` - Database ID: ${databaseId}`);
+
+    const firebaseApp = getApps().length === 0 
+      ? initializeApp({
+          projectId: projectId
+        })
+      : getApp();
+
+    db = getFirestore(firebaseApp, databaseId);
+    log("[Firebase Admin] Initialized successfully");
+  } catch (error) {
+    log(`[Firebase Admin] Initialization failed: ${error}`);
+  }
 
   app.use(express.json());
 
   // API routes
-  app.get("/api/ping", (req, res) => {
-    res.send("pong");
-  });
-
-  app.get("/api/debug-html", (req, res) => {
-    const distPath = path.join(process.cwd(), 'dist');
-    const htmlPath = path.join(distPath, 'index.html');
-    if (fs.existsSync(htmlPath)) {
-      res.send(fs.readFileSync(htmlPath, 'utf8'));
-    } else {
-      res.status(404).send("index.html not found in dist");
-    }
-  });
-
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
-  });
-
   // Test Firestore connectivity
   app.get("/api/test-db", async (req, res) => {
     try {
@@ -99,7 +129,7 @@ async function startServer() {
         exists: testDoc.exists 
       });
     } catch (error) {
-      console.error("Firestore Connectivity Test Failed:", error);
+      log(`Firestore Connectivity Test Failed: ${error}`);
       res.status(500).json({ 
         status: "error", 
         message: error instanceof Error ? error.message : String(error),
@@ -124,7 +154,7 @@ async function startServer() {
       });
       res.json({ url });
     } catch (error) {
-      console.error("Error generating Auth URL:", error);
+      log(`Error generating Auth URL: ${error}`);
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to generate Auth URL" });
     }
   });
@@ -134,7 +164,7 @@ async function startServer() {
     const { code, state, error } = req.query;
 
     if (error === "access_denied") {
-      console.log("OAuth Callback: User denied access.");
+      log("OAuth Callback: User denied access.");
       return res.send(`
         <html>
           <body>
@@ -153,32 +183,32 @@ async function startServer() {
     }
 
     if (!code) {
-      console.error("OAuth Callback Error: No code provided", req.query);
+      log(`OAuth Callback Error: No code provided ${JSON.stringify(req.query)}`);
       return res.status(400).send("No code provided");
     }
 
     try {
-      console.log("OAuth Callback: Exchanging code for tokens...");
+      log("OAuth Callback: Exchanging code for tokens...");
       const { tokens } = await oauth2Client.getToken(code as string);
-      console.log("OAuth Callback: Tokens received successfully.");
+      log("OAuth Callback: Tokens received successfully.");
       
       // We need the userId to associate the token. 
       const userId = state as string;
 
       if (userId && tokens.refresh_token) {
-        console.log(`OAuth Callback: Saving refresh token for user ${userId} to database ${databaseId || 'default'}`);
+        log(`OAuth Callback: Saving refresh token for user ${userId} to database ${databaseId || 'default'}`);
         try {
           await db.collection("terminals").doc(userId).set({
             googleDriveRefreshToken: tokens.refresh_token,
             autoExportEnabled: true
           }, { merge: true });
-          console.log("OAuth Callback: Token saved to Firestore successfully.");
+          log("OAuth Callback: Token saved to Firestore successfully.");
         } catch (dbError) {
-          console.error("Firestore Save Error:", dbError);
+          log(`Firestore Save Error: ${dbError}`);
           throw dbError;
         }
       } else if (!tokens.refresh_token) {
-        console.warn("OAuth Callback: No refresh_token received. Ensure 'prompt: consent' is used.");
+        log("OAuth Callback: No refresh_token received. Ensure 'prompt: consent' is used.");
       }
 
       res.send(`
@@ -197,14 +227,14 @@ async function startServer() {
         </html>
       `);
     } catch (error) {
-      console.error("OAuth Callback Error:", error);
+      log(`OAuth Callback Error: ${error}`);
       res.status(500).send(`Authentication failed: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   });
 
   // Monthly Export Logic
   const runMonthlyExport = async () => {
-    console.log("[CRON] Starting monthly export...");
+    log("[CRON] Starting monthly export...");
     const terminalsSnapshot = await db.collection("terminals").where("autoExportEnabled", "==", true).get();
 
     for (const terminalDoc of terminalsSnapshot.docs) {
@@ -226,11 +256,12 @@ async function startServer() {
         // Fetch logs
         const logsSnapshot = await db.collection("terminals").doc(userId).collection("logs").orderBy("timestamp", "desc").get();
         if (logsSnapshot.empty) {
-          console.log(`[CRON] No logs for user ${userId}, skipping.`);
+          log(`[CRON] No logs for user ${userId}, skipping.`);
           continue;
         }
 
         const logsData = logsSnapshot.docs.map(doc => doc.data());
+        const Papa = (await import("papaparse")).default;
         const csv = Papa.unparse(logsData);
 
         // Upload to Drive
@@ -246,22 +277,23 @@ async function startServer() {
           },
         });
 
-        console.log(`[CRON] Exported logs for ${userId} to Google Drive.`);
+        log(`[CRON] Exported logs for ${userId} to Google Drive.`);
 
         // Clear logs
         const batch = db.batch();
         logsSnapshot.docs.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
         
-        console.log(`[CRON] Cleared logs for ${userId}.`);
+        log(`[CRON] Cleared logs for ${userId}.`);
 
       } catch (error) {
-        console.error(`[CRON] Export failed for user ${userId}:`, error);
+        log(`[CRON] Export failed for user ${userId}: ${error}`);
       }
     }
   };
 
   // Schedule: Run every day at midnight and check if it's the last day of the month
+  const cron = (await import("node-cron")).default;
   cron.schedule("0 0 * * *", () => {
     const today = new Date();
     const tomorrow = new Date(today);
@@ -283,44 +315,37 @@ async function startServer() {
     res.status(404).json({ error: `API route ${req.method} ${req.url} not found` });
   });
 
-  app.get("/test", (req, res) => {
-    res.send("<h1>Server is responding at /test</h1>");
-  });
-
   // Vite middleware for development
-  const isProduction = false; // Force development mode for testing
+  const isProduction = process.env.NODE_ENV === "production" || fs.existsSync(path.join(process.cwd(), 'dist'));
+  log(`[Server] Mode: ${isProduction ? "PRODUCTION" : "DEVELOPMENT"}`);
   
   if (!isProduction) {
-    console.log("[Server] Starting in DEVELOPMENT mode (Vite middleware)");
+    log("[Server] Starting in DEVELOPMENT mode (Vite middleware)");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    console.log("[Server] Starting in PRODUCTION mode (serving dist)");
-    const distPath = path.join(process.cwd(), 'dist');
+    log("[Server] Starting in PRODUCTION mode (serving dist)");
+    const distPath = path.resolve(__dirname, 'dist');
     
     app.use((req, res, next) => {
       if (req.url.startsWith('/assets/')) {
-        console.log(`[Server] Asset request: ${req.url}`);
+        log(`[Server] Asset request: ${req.url}`);
       }
       next();
     });
 
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      console.log(`[Server] Catch-all route hit for: ${req.url}`);
-      res.sendFile(path.join(distPath, 'index.html'));
+      log(`[Server] Catch-all route hit for: ${req.url}`);
+      res.sendFile(path.resolve(distPath, 'index.html'));
     });
   }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
 }
 
 startServer().catch((err) => {
-  console.error("[Server] Failed to start server:", err);
+  log(`[Server] Failed to start server: ${err}`);
   process.exit(1);
 });
