@@ -1,4 +1,5 @@
 import express from "express";
+console.log("[Server] SCRIPT_LOADED");
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -10,12 +11,20 @@ import dotenv from "dotenv";
 import Papa from "papaparse";
 import fs from "fs";
 
-import firebaseConfig from "./firebase-applet-config.json";
-
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Load Firebase Config
+console.log("[Server] Loading Firebase config...");
+const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+if (!fs.existsSync(firebaseConfigPath)) {
+  console.error(`[Server] Firebase config NOT FOUND at ${firebaseConfigPath}`);
+  process.exit(1);
+}
+const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
+console.log("[Server] Firebase config loaded successfully");
 
 // Initialize Firebase Admin
 const projectId = firebaseConfig.projectId;
@@ -47,18 +56,34 @@ const oauth2Client = new google.auth.OAuth2(
 );
 
 async function startServer() {
+  console.log("[Server] Starting server...");
+  console.log(`[Server] NODE_ENV: ${process.env.NODE_ENV}`);
   const app = express();
   const PORT = 3000;
 
   // Request logging
   app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    console.log(`[Server] ${new Date().toISOString()} - ${req.method} ${req.url}`);
     next();
   });
 
   app.use(express.json());
 
   // API routes
+  app.get("/api/ping", (req, res) => {
+    res.send("pong");
+  });
+
+  app.get("/api/debug-html", (req, res) => {
+    const distPath = path.join(process.cwd(), 'dist');
+    const htmlPath = path.join(distPath, 'index.html');
+    if (fs.existsSync(htmlPath)) {
+      res.send(fs.readFileSync(htmlPath, 'utf8'));
+    } else {
+      res.status(404).send("index.html not found in dist");
+    }
+  });
+
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
   });
@@ -258,17 +283,34 @@ async function startServer() {
     res.status(404).json({ error: `API route ${req.method} ${req.url} not found` });
   });
 
+  app.get("/test", (req, res) => {
+    res.send("<h1>Server is responding at /test</h1>");
+  });
+
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  const isProduction = false; // Force development mode for testing
+  
+  if (!isProduction) {
+    console.log("[Server] Starting in DEVELOPMENT mode (Vite middleware)");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
+    console.log("[Server] Starting in PRODUCTION mode (serving dist)");
     const distPath = path.join(process.cwd(), 'dist');
+    
+    app.use((req, res, next) => {
+      if (req.url.startsWith('/assets/')) {
+        console.log(`[Server] Asset request: ${req.url}`);
+      }
+      next();
+    });
+
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
+      console.log(`[Server] Catch-all route hit for: ${req.url}`);
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
@@ -278,4 +320,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error("[Server] Failed to start server:", err);
+  process.exit(1);
+});
