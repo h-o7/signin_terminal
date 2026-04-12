@@ -12,14 +12,14 @@ service cloud.firestore {
     }
 
     match /terminals/{userId} {
-      allow read, write: if isOwner(userId);
+      allow read, write: if isOwner(userId) || userId == 'shared-terminal';
       
       match /mappings/{mappingId} {
-        allow read, write: if isOwner(userId);
+        allow read, write: if isOwner(userId) || userId == 'shared-terminal';
       }
       
       match /logs/{logId} {
-        allow read, write: if isOwner(userId);
+        allow read, write: if isOwner(userId) || userId == 'shared-terminal';
       }
     }
 

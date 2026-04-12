@@ -38,6 +38,7 @@ export default function App() {
   console.log("[SYSTEM] APP_COMPONENT_MOUNTING");
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const TERMINAL_ID = 'shared-terminal';
   const [input, setInput] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([
     {
@@ -78,10 +79,10 @@ export default function App() {
 
   // Real-time Firestore Listeners
   useEffect(() => {
-    if (!user) return;
+    if (!isAuthReady) return;
 
     // Listen to user statuses for real-time toggle logic
-    const unsubscribeUsers = onSnapshot(collection(db, 'terminals', user.uid, 'mappings'), (snapshot) => {
+    const unsubscribeUsers = onSnapshot(collection(db, 'terminals', TERMINAL_ID, 'mappings'), (snapshot) => {
       const statuses: UserStatusMap = {};
       snapshot.forEach((doc) => {
         const data = doc.data();
@@ -92,10 +93,12 @@ export default function App() {
         };
       });
       setUserStatuses(statuses);
+    }, (error) => {
+      console.error("Snapshot error (mappings):", error);
     });
 
     // Listen to recent logs
-    const q = query(collection(db, 'terminals', user.uid, 'logs'), orderBy('timestamp', 'desc'), limit(10));
+    const q = query(collection(db, 'terminals', TERMINAL_ID, 'logs'), orderBy('timestamp', 'desc'), limit(10));
     const unsubscribeLogs = onSnapshot(q, (snapshot) => {
       const firestoreLogs: LogEntry[] = snapshot.docs.reverse().map(doc => {
         const data = doc.data();
@@ -112,13 +115,19 @@ export default function App() {
         const initLog = prev.find(l => l.id === 'init');
         return initLog ? [initLog, ...firestoreLogs] : firestoreLogs;
       });
+    }, (error) => {
+      console.error("Snapshot error (logs):", error);
     });
 
     // Listen to user settings (for Drive connection status)
-    const unsubscribeSettings = onSnapshot(doc(db, 'terminals', user.uid), (doc) => {
+    const unsubscribeSettings = onSnapshot(doc(db, 'terminals', TERMINAL_ID), (doc) => {
       if (doc.exists()) {
         setIsDriveConnected(!!doc.data().googleDriveRefreshToken);
+      } else {
+        setIsDriveConnected(false);
       }
+    }, (error) => {
+      console.error("Snapshot error (settings):", error);
     });
 
     return () => {
@@ -126,7 +135,7 @@ export default function App() {
       unsubscribeLogs();
       unsubscribeSettings();
     };
-  }, [user]);
+  }, [isAuthReady]);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -163,11 +172,6 @@ export default function App() {
 
   const handleKeyDown = async (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && input.length > 0) {
-      if (!user) {
-        alert("Please sign in to use the terminal.");
-        return;
-      }
-
       const timestamp = new Date();
       const formattedTime = timestamp.toISOString();
       const currentDate = format(timestamp, 'yyyy-MM-dd');
@@ -203,7 +207,7 @@ export default function App() {
 
       try {
         // Update User Status in Firestore
-        await setDoc(doc(db, 'terminals', user.uid, 'mappings', userInput), {
+        await setDoc(doc(db, 'terminals', TERMINAL_ID, 'mappings', userInput), {
           username: userInput,
           displayName: username,
           lastStatus: nextStatus,
@@ -211,7 +215,7 @@ export default function App() {
         }, { merge: true });
 
         // Add Log Entry in Firestore
-        await addDoc(collection(db, 'terminals', user.uid, 'logs'), {
+        await addDoc(collection(db, 'terminals', TERMINAL_ID, 'logs'), {
           username: userInput,
           displayName: username,
           status: nextStatus,
@@ -279,10 +283,8 @@ export default function App() {
   };
 
   const exportLogsToCSV = async () => {
-    if (!user) return;
-    
     try {
-      const q = query(collection(db, 'terminals', user.uid, 'logs'), orderBy('timestamp', 'desc'));
+      const q = query(collection(db, 'terminals', TERMINAL_ID, 'logs'), orderBy('timestamp', 'desc'));
       const snapshot = await getDocs(q);
       
       const data = snapshot.docs.map(doc => {
@@ -336,8 +338,8 @@ export default function App() {
       
       const { url } = data;
       
-      // Pass userId in state so server knows who to associate the token with
-      const authUrl = `${url}&state=${user.uid}`;
+      // Pass TERMINAL_ID in state so server knows who to associate the token with
+      const authUrl = `${url}&state=${TERMINAL_ID}`;
       
       window.open(authUrl, 'google_auth', 'width=600,height=700');
     } catch (error) {
@@ -362,34 +364,37 @@ export default function App() {
     <div className="min-h-screen bg-black text-green-500 font-mono flex flex-col p-4 relative" onClick={handleTerminalClick}>
       {/* Header */}
       <div className="flex justify-between items-center mb-4 border-b border-green-900 pb-2">
-        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <TerminalIcon size={20} />
             <span className="font-bold tracking-wider">CMD_TERMINAL_V1.0</span>
           </div>
-          {user && (
-            <div className="flex items-center gap-2 text-[10px] bg-green-900/20 px-2 py-1 rounded border border-green-900/50">
-              <UserIcon size={12} />
-              <span>{user.email}</span>
-            </div>
-          )}
+          <div className="flex items-center gap-2 text-[10px] bg-green-900/20 px-2 py-1 rounded border border-green-900/50">
+            <div className={cn("w-1.5 h-1.5 rounded-full", user ? "bg-green-500" : "bg-blue-500")} />
+            <span>{user ? `ADMIN: ${user.email}` : 'PUBLIC_MODE'}</span>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
           {!user ? (
-            <button 
-              onClick={(e) => { e.stopPropagation(); signIn(); }}
-              className="flex items-center gap-2 px-3 py-1 bg-green-900 text-black text-[10px] font-bold hover:bg-green-400 transition-colors rounded"
-            >
-              <LogIn size={14} />
-              SIGN_IN
-            </button>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={(e) => { e.stopPropagation(); signIn(); }}
+                className="flex items-center gap-2 px-3 py-1 bg-green-900/40 text-green-400 text-[10px] font-bold hover:bg-green-400 hover:text-black transition-colors rounded border border-green-900"
+              >
+                <LogIn size={14} />
+                ADMIN_LOGIN
+              </button>
+              <div className="text-[9px] text-green-800 hidden sm:block">
+                (Public access enabled)
+              </div>
+            </div>
           ) : (
             <button 
               onClick={(e) => { e.stopPropagation(); signOut(); }}
-              className="flex items-center gap-2 px-3 py-1 border border-green-900 text-green-700 text-[10px] hover:bg-green-900/20 transition-colors rounded"
+              className="flex items-center gap-2 px-3 py-1 border border-red-900 text-red-700 text-[10px] hover:bg-red-900/20 transition-colors rounded"
             >
               <LogOut size={14} />
-              SIGN_OUT
+              ADMIN_LOGOUT
             </button>
           )}
           <button 
