@@ -40,6 +40,7 @@ export default function App() {
     { id: 'init', timestamp: new Date(), message: 'SYSTEM_BOOT_COMPLETE: Terminal ready.', type: 'system' }
   ]);
   const [userStatuses, setUserStatuses] = useState<UserStatusMap>({});
+  const [isGDriveConnected, setIsGDriveConnected] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -53,6 +54,28 @@ export default function App() {
       setIsAuthReady(true);
     });
     return () => unsubscribe();
+  }, []);
+
+  // Check GDrive Status
+  useEffect(() => {
+    if (user) {
+      fetch('/api/auth/google/status')
+        .then(res => res.json())
+        .then(data => setIsGDriveConnected(data.connected))
+        .catch(err => console.error('Error checking GDrive status:', err));
+    }
+  }, [user]);
+
+  // Listen for OAuth Success
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'GDRIVE_AUTH_SUCCESS') {
+        setIsGDriveConnected(true);
+        setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Google Drive connected successfully.', type: 'system' }]);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
   }, []);
 
   // Real-time Firestore Listeners (only when started)
@@ -189,12 +212,47 @@ export default function App() {
     alert('Database cleared');
   };
 
-  const connectGoogleDrive = () => {
-    alert('Google Drive connection initialized. (OAuth flow would trigger here)');
+  const handleConnectGoogleDrive = async () => {
+    try {
+      const res = await fetch('/api/auth/google/url');
+      const { url } = await res.json();
+      window.open(url, 'gdrive_auth', 'width=600,height=700');
+    } catch (err) {
+      console.error('Failed to get auth URL:', err);
+      alert('Failed to initialize Google Drive connection.');
+    }
   };
 
-  const exportToGoogleDrive = () => {
-    alert('Exporting data to linked Google Drive...');
+  const handleExportToGoogleDrive = async () => {
+    if (!isGDriveConnected) {
+      handleConnectGoogleDrive();
+      return;
+    }
+
+    try {
+      const snapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'logs'));
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const csv = Papa.unparse(data);
+
+      const res = await fetch('/api/export/gdrive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          csvData: csv,
+          fileName: `terminal_logs_${format(new Date(), 'yyyy-MM-dd')}.csv`
+        })
+      });
+
+      if (res.ok) {
+        alert('Data exported to Google Drive successfully!');
+      } else {
+        const err = await res.json();
+        alert(`Export failed: ${err.error}`);
+      }
+    } catch (err) {
+      console.error('Export error:', err);
+      alert('An error occurred during export.');
+    }
   };
 
   if (!isStarted) {
@@ -359,11 +417,11 @@ export default function App() {
                     EXPORT_CSV
                   </button>
                   <button 
-                    onClick={exportToGoogleDrive}
+                    onClick={handleExportToGoogleDrive}
                     className="flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all text-xs"
                   >
                     <Cloud size={16} />
-                    EXPORT_GDRIVE
+                    {isGDriveConnected ? 'EXPORT_GDRIVE' : 'CONNECT_GDRIVE'}
                   </button>
                 </div>
               </div>
@@ -371,11 +429,16 @@ export default function App() {
               {/* 3. Connect GDrive */}
               <div className="space-y-2">
                 <button 
-                  onClick={connectGoogleDrive}
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-blue-900/20 border border-blue-900 hover:bg-blue-900/40 text-blue-400 rounded transition-all"
+                  onClick={handleConnectGoogleDrive}
+                  className={cn(
+                    "w-full flex items-center justify-center gap-2 py-3 border rounded transition-all",
+                    isGDriveConnected 
+                      ? "bg-green-900/20 border-green-900 text-green-400"
+                      : "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40"
+                  )}
                 >
                   <Cloud size={18} />
-                  CONNECT_GOOGLE_DRIVE
+                  {isGDriveConnected ? 'GOOGLE_DRIVE_CONNECTED' : 'CONNECT_GOOGLE_DRIVE'}
                 </button>
               </div>
 
