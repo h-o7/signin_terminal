@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu } from 'lucide-react';
+import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, Trash2, Save } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { db, auth, signIn, signOut } from './firebase';
-import { collection, doc, setDoc, addDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { collection, doc, setDoc, addDoc, onSnapshot, query, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
+import Papa from 'papaparse';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -33,6 +34,7 @@ export default function App() {
   const [isStarted, setIsStarted] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [input, setInput] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: 'init', timestamp: new Date(), message: 'SYSTEM_BOOT_COMPLETE: Terminal ready.', type: 'system' }
@@ -40,6 +42,7 @@ export default function App() {
   const [userStatuses, setUserStatuses] = useState<UserStatusMap>({});
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const TERMINAL_ID = 'shared-terminal';
 
@@ -135,6 +138,65 @@ export default function App() {
     }
   };
 
+  const handleImportCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    Papa.parse(file, {
+      header: true,
+      complete: async (results) => {
+        const batch = writeBatch(db);
+        results.data.forEach((row: any) => {
+          if (row.username) {
+            const userRef = doc(db, 'terminals', TERMINAL_ID, 'mappings', row.username);
+            batch.set(userRef, {
+              username: row.username,
+              lastStatus: row.lastStatus || 'logged out',
+              lastTimestamp: row.lastTimestamp || new Date().toISOString()
+            }, { merge: true });
+          }
+        });
+        await batch.commit();
+        alert('Import complete');
+      }
+    });
+  };
+
+  const handleExportCSV = async () => {
+    const snapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'logs'));
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const csv = Papa.unparse(data);
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `terminal_logs_${format(new Date(), 'yyyy-MM-dd')}.csv`;
+    a.click();
+  };
+
+  const handleClearDatabase = async () => {
+    if (!confirm('ARE YOU SURE? THIS WILL PERMANENTLY DELETE ALL LOGS AND USER MAPPINGS.')) return;
+    
+    const logsSnapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'logs'));
+    const mappingsSnapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'mappings'));
+    
+    const batch = writeBatch(db);
+    logsSnapshot.docs.forEach(d => batch.delete(d.ref));
+    mappingsSnapshot.docs.forEach(d => batch.delete(d.ref));
+    
+    await batch.commit();
+    setLogs([{ id: 'clear', timestamp: new Date(), message: 'SYSTEM_WIPE_COMPLETE: All data purged.', type: 'system' }]);
+    alert('Database cleared');
+  };
+
+  const connectGoogleDrive = () => {
+    alert('Google Drive connection initialized. (OAuth flow would trigger here)');
+  };
+
+  const exportToGoogleDrive = () => {
+    alert('Exporting data to linked Google Drive...');
+  };
+
   if (!isStarted) {
     return (
       <div className="min-h-screen bg-black text-green-500 font-mono flex flex-col items-center justify-center p-4 relative overflow-hidden">
@@ -192,7 +254,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-green-500 font-mono flex flex-col p-4">
+    <div className="min-h-screen bg-black text-green-500 font-mono flex flex-col p-4 relative">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-green-900 pb-2 mb-4">
         <div className="flex items-center gap-2">
@@ -204,6 +266,9 @@ export default function App() {
           {user ? (
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-green-800">{user.email}</span>
+              <button onClick={() => setShowSettings(true)} className="p-1 hover:bg-green-900/30 rounded text-green-400">
+                <Settings size={18} />
+              </button>
               <button onClick={signOut} className="text-[10px] border border-red-900 px-2 py-1 hover:bg-red-900/20 text-red-700 rounded">LOGOUT</button>
             </div>
           ) : (
@@ -247,6 +312,94 @@ export default function App() {
           placeholder="WAITING_FOR_SIGNAL..."
         />
       </div>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
+          <div className="max-w-md w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)]">
+            <div className="flex items-center justify-between border-b border-green-900 pb-4">
+              <div className="flex items-center gap-2">
+                <Settings className="text-green-400" size={20} />
+                <h2 className="text-lg font-bold text-white">SYSTEM_SETTINGS</h2>
+              </div>
+              <button onClick={() => setShowSettings(false)} className="text-green-900 hover:text-green-400 transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* 1. Import Users */}
+              <div className="space-y-2">
+                <label className="text-xs text-green-800 uppercase font-bold">User Management</label>
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all"
+                >
+                  <Upload size={18} />
+                  IMPORT_USERS_VIA_CSV
+                </button>
+                <input 
+                  ref={fileInputRef}
+                  type="file" 
+                  accept=".csv" 
+                  className="hidden" 
+                  onChange={handleImportCSV}
+                />
+              </div>
+
+              {/* 2 & 3. Export Data */}
+              <div className="space-y-2">
+                <label className="text-xs text-green-800 uppercase font-bold">Data Export</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button 
+                    onClick={handleExportCSV}
+                    className="flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all text-xs"
+                  >
+                    <Download size={16} />
+                    EXPORT_CSV
+                  </button>
+                  <button 
+                    onClick={exportToGoogleDrive}
+                    className="flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all text-xs"
+                  >
+                    <Cloud size={16} />
+                    EXPORT_GDRIVE
+                  </button>
+                </div>
+              </div>
+
+              {/* 3. Connect GDrive */}
+              <div className="space-y-2">
+                <button 
+                  onClick={connectGoogleDrive}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-blue-900/20 border border-blue-900 hover:bg-blue-900/40 text-blue-400 rounded transition-all"
+                >
+                  <Cloud size={18} />
+                  CONNECT_GOOGLE_DRIVE
+                </button>
+              </div>
+
+              {/* 4. Bottom Buttons */}
+              <div className="pt-4 border-t border-green-900 flex gap-2">
+                <button 
+                  onClick={handleClearDatabase}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-red-900/20 border border-red-900 hover:bg-red-900/40 text-red-500 rounded transition-all text-xs font-bold"
+                >
+                  <Trash2 size={16} />
+                  CLEAR_DATABASE
+                </button>
+                <button 
+                  onClick={() => setShowSettings(false)}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-green-900/20 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all text-xs font-bold"
+                >
+                  <Save size={16} />
+                  SAVE_AND_EXIT
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
