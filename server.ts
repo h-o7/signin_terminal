@@ -22,6 +22,13 @@ const oauth2Client = new google.auth.OAuth2(
 const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
 
 function getRedirectUri(req: express.Request) {
+  // Priority 1: Use APP_URL if set (common in AI Studio)
+  if (process.env.APP_URL) {
+    const base = process.env.APP_URL.replace(/\/$/, '');
+    return `${base}/auth/callback`;
+  }
+
+  // Priority 2: Use headers
   const protocol = req.headers['x-forwarded-proto'] || 'http';
   const host = req.headers['host'];
   return `${protocol}://${host}/auth/callback`;
@@ -30,6 +37,8 @@ function getRedirectUri(req: express.Request) {
 // API: Get Auth URL
 app.get('/api/auth/google/url', (req, res) => {
   const redirectUri = getRedirectUri(req);
+  console.log(`[AUTH] Requesting OAuth with redirect_uri: ${redirectUri}`);
+  
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: SCOPES,
@@ -40,9 +49,10 @@ app.get('/api/auth/google/url', (req, res) => {
 });
 
 // API: Auth Callback
-app.get('/auth/callback', async (req, res) => {
+app.get(['/auth/callback', '/auth/callback/'], async (req, res) => {
   const { code } = req.query;
   const redirectUri = getRedirectUri(req);
+  console.log(`[AUTH] Handling callback with redirect_uri: ${redirectUri}`);
 
   try {
     const { tokens } = await oauth2Client.getToken({

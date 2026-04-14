@@ -440,6 +440,15 @@ export default function App() {
                   <Cloud size={18} />
                   {isGDriveConnected ? 'GOOGLE_DRIVE_CONNECTED' : 'CONNECT_GOOGLE_DRIVE'}
                 </button>
+                {!isGDriveConnected && (
+                  <div className="p-2 bg-blue-950/20 border border-blue-900/30 rounded">
+                    <p className="text-[9px] text-blue-400 uppercase font-bold mb-1">OAuth Redirect URI:</p>
+                    <code className="text-[9px] text-blue-300 break-all bg-black/50 p-1 block">
+                      {window.location.origin}/auth/callback
+                    code>
+                    <p className="text-[8px] text-blue-800 mt-1 italic">Add this to your Google Cloud Console Authorized Redirect URIs.</p>
+                  </div>
+                )}
               </div>
 
               {/* 4. Bottom Buttons */}
