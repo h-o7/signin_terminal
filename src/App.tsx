@@ -243,6 +243,8 @@ export default function App() {
       return;
     }
 
+    setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Starting Google Drive export...', type: 'system' }]);
+
     try {
       const snapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'logs'));
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -257,15 +259,26 @@ export default function App() {
         })
       });
 
+      const contentType = res.headers.get("content-type");
       if (res.ok) {
+        setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Export successful.', type: 'system' }]);
         alert('Data exported to Google Drive successfully!');
       } else {
-        const err = await res.json();
-        alert(`Export failed: ${err.error}`);
+        let errorMsg = `Server error (${res.status})`;
+        if (contentType && contentType.includes("application/json")) {
+          const errData = await res.json();
+          errorMsg = errData.error || errorMsg;
+        } else {
+          const text = await res.text();
+          console.error('Non-JSON error response:', text);
+          errorMsg = `Server error: ${res.statusText}. The backend might be unavailable or the file is too large.`;
+        }
+        throw new Error(errorMsg);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Export error:', err);
-      alert('An error occurred during export.');
+      alert(`Export failed: ${err.message}`);
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: `ERROR: Export failed - ${err.message}`, type: 'system' }]);
     }
   };
 
