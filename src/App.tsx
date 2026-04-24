@@ -60,9 +60,17 @@ export default function App() {
   useEffect(() => {
     if (user) {
       fetch('/api/auth/google/status')
-        .then(res => res.json())
+        .then(async res => {
+          const contentType = res.headers.get("content-type");
+          if (contentType && contentType.indexOf("application/json") !== -1) {
+            return res.json();
+          }
+          throw new Error("SERVER_NOT_FOUND: Environment may be static-only.");
+        })
         .then(data => setIsGDriveConnected(data.connected))
-        .catch(err => console.error('Error checking GDrive status:', err));
+        .catch(err => {
+          console.warn('GDrive Status Check skipped:', err.message);
+        });
     }
   }, [user]);
 
@@ -215,11 +223,17 @@ export default function App() {
   const handleConnectGoogleDrive = async () => {
     try {
       const res = await fetch('/api/auth/google/url');
+      const contentType = res.headers.get("content-type");
+      
+      if (!contentType || contentType.indexOf("application/json") === -1) {
+        throw new Error("BACKEND_UNAVAILABLE: OAuth requires a Node.js environment. Please use the Preview/Shared URL (ais-pre-...).");
+      }
+
       const { url } = await res.json();
       window.open(url, 'gdrive_auth', 'width=600,height=700');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to get auth URL:', err);
-      alert('Failed to initialize Google Drive connection.');
+      alert(err.message || 'Failed to initialize Google Drive connection.');
     }
   };
 
