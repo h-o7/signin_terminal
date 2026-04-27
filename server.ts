@@ -1,7 +1,8 @@
+console.log('[SYSTEM] Process starting...');
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
+// import { createServer as createViteServer } from 'vite'; // Moved to dynamic import inside startServer
 import path from 'path';
-import { google } from 'googleapis';
+// import { google } from 'googleapis'; // Moved to dynamic import
 import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 
@@ -13,16 +14,28 @@ const PORT = 3000;
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
+// Health check
+app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+
 // Favicon redirect
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 let oauth2Client: any = null;
 
-function getOAuth2Client() {
+async function getOAuth2Client() {
   if (!oauth2Client) {
+    const { google } = await import('googleapis');
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      console.warn('[AUTH] Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET. Google Drive features will fail.');
+      return null;
+    }
+
     oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
+      clientId,
+      clientSecret,
       '' // Redirect URI will be set dynamically
     );
   }
@@ -45,11 +58,15 @@ function getRedirectUri(req: express.Request) {
 }
 
 // API: Get Auth URL
-app.get('/api/auth/google/url', (req, res) => {
+app.get('/api/auth/google/url', async (req, res) => {
   const redirectUri = getRedirectUri(req);
   console.log(`[AUTH] Requesting OAuth with redirect_uri: ${redirectUri}`);
   
-  const client = getOAuth2Client();
+  const client = await getOAuth2Client();
+  if (!client) {
+    return res.status(500).json({ error: 'OAuth client not initialized. Check server environment variables.' });
+  }
+
   const url = client.generateAuthUrl({
     access_type: 'offline',
     scope: SCOPES,
@@ -65,7 +82,11 @@ app.get(['/auth/callback', '/auth/callback/'], async (req, res) => {
   const redirectUri = getRedirectUri(req);
   console.log(`[AUTH] Handling callback with redirect_uri: ${redirectUri}`);
 
-  const client = getOAuth2Client();
+  const client = await getOAuth2Client();
+  if (!client) {
+    return res.status(500).send('OAuth client not initialized.');
+  }
+
   try {
     const { tokens } = await client.getToken({
       code: code as string,
@@ -111,6 +132,17 @@ app.get('/api/auth/google/status', (req, res) => {
   res.json({ connected: hasToken });
 });
 
+// API: Disconnect Google Drive
+app.post('/api/auth/google/disconnect', (req, res) => {
+  res.clearCookie('gdrive_refresh_token', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none'
+  });
+  console.log('[AUTH] Google Drive disconnected (cookie cleared)');
+  res.json({ success: true });
+});
+
 // API: Export to Drive
 app.post('/api/export/gdrive', async (req, res) => {
   const refreshToken = req.cookies.gdrive_refresh_token;
@@ -119,9 +151,15 @@ app.post('/api/export/gdrive', async (req, res) => {
   }
 
   const { csvData, fileName } = req.body;
+  console.log(`[DRIVE] Export requested for file: ${fileName}`);
 
   try {
-    const client = getOAuth2Client();
+    const { google } = await import('googleapis');
+    const client = await getOAuth2Client();
+    if (!client) {
+      return res.status(500).json({ error: 'OAuth client not initialized. Check server environment variables.' });
+    }
+
     client.setCredentials({ refresh_token: refreshToken });
     const drive = google.drive({ version: 'v3', auth: client });
 
@@ -152,23 +190,42 @@ app.post('/api/export/gdrive', async (req, res) => {
 });
 
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*all', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
+  try {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[SERVER] Starting in DEVELOPMENT mode with Vite middleware');
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } else {
+      console.log('[SERVER] Starting in PRODUCTION mode serving from dist/');
+      const distPath = path.join(process.cwd(), 'dist');
+      
+      app.use(express.static(distPath));
+      
+      // Catch-all route for SPA - Standard '*' for Express 4/5 compatibility
+      app.get('*', (req, res) => {
+        const indexPath = path.join(distPath, 'index.html');
+        console.log(`[SERVER] Serving SPA for: ${req.url}`);
+        res.sendFile(indexPath, (err) => {
+          if (err) {
+            console.error(`[ERROR] Failed to send index.html for ${req.url}: ${err.message}`);
+            // If index.html is missing, the build might have failed or outDir is wrong
+            res.status(500).send('Application Error: Frontend assets not found. Please contact support.');
+          }
+        });
+      });
+    }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on http://0.0.0.0:${PORT}`);
+    });
+  } catch (err) {
+    console.error('[CRITICAL] Failed to start server:', err);
+    process.exit(1);
+  }
 }
 
 startServer();

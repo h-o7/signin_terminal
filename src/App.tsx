@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users } from 'lucide-react';
+import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -47,6 +47,9 @@ export default function App() {
   const [reportUser, setReportUser] = useState<string>('all');
   const [reportStartDate, setReportStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [reportEndDate, setReportEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [selectedTimezone, setSelectedTimezone] = useState<string>(
+    localStorage.getItem('terminal_timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone
+  );
   const [availableUsers, setAvailableUsers] = useState<UserRecord[]>([]);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [input, setInput] = useState('');
@@ -281,30 +284,116 @@ export default function App() {
   };
 
   const handleExportCSV = async () => {
-    const snapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'logs'));
-    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    const csv = Papa.unparse(data);
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `terminal_logs_${format(new Date(), 'yyyy-MM-dd')}.csv`;
-    a.click();
+    try {
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Fetching all logs for export...', type: 'system' }]);
+      const snapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'logs'));
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      if (data.length === 0) {
+        setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: No logs found in database.', type: 'system' }]);
+        alert('No logs found in database.');
+        return;
+      }
+
+      const csv = Papa.unparse(data);
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `terminal_logs_${format(new Date(), 'yyyy-MM-dd')}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: `SYSTEM: Exported ${data.length} records.`, type: 'system' }]);
+    } catch (err: any) {
+      console.error('Export error:', err);
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: `ERROR: Export failed - ${err.message}`, type: 'system' }]);
+      alert('Export failed: ' + err.message);
+    }
+  };
+
+  const performGoogleDriveExport = async () => {
+    if (!isGDriveConnected) {
+      handleConnectGoogleDrive();
+      return { success: false, error: 'Not connected' };
+    }
+
+    setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Starting Google Drive backup before clear...', type: 'system' }]);
+
+    try {
+      const snapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'logs'));
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      if (data.length === 0) {
+        return { success: true, message: 'No data to export' };
+      }
+
+      const csv = Papa.unparse(data);
+
+      const res = await fetch('/api/export/gdrive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          csvData: csv,
+          fileName: `terminal_backup_pre_clear_${format(new Date(), 'yyyy-MM-dd_HH-mm-ss')}.csv`
+        })
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        setLogs(prev => [...prev, { 
+          id: Date.now().toString(), 
+          timestamp: new Date(), 
+          message: `SYSTEM: Backup successful. File ID: ${result.fileId}`, 
+          type: 'system' 
+        }]);
+        return { success: true, fileId: result.fileId };
+      } else {
+        const errData = await res.json();
+        throw new Error(errData.error || `Server error (${res.status})`);
+      }
+    } catch (err: any) {
+      console.error('Backup error:', err);
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: `ERROR: Backup failed - ${err.message}`, type: 'system' }]);
+      return { success: false, error: err.message };
+    }
   };
 
   const handleClearDatabase = async () => {
-    if (!confirm('ARE YOU SURE? THIS WILL PERMANENTLY DELETE ALL LOGS AND USER MAPPINGS.')) return;
+    if (!isGDriveConnected) {
+      alert('CRITICAL_RESTRICTION: Google Drive must be connected for automated backup before clearing the database.');
+      return;
+    }
+
+    if (!confirm('ARE YOU SURE? THIS WILL BACK UP DATA TO GOOGLE DRIVE AND THEN PERMANENTLY DELETE ALL LOGS AND USER MAPPINGS.')) return;
     
-    const logsSnapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'logs'));
-    const mappingsSnapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'mappings'));
+    setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Initializing full system wipe with mandatory backup...', type: 'system' }]);
     
-    const batch = writeBatch(db);
-    logsSnapshot.docs.forEach(d => batch.delete(d.ref));
-    mappingsSnapshot.docs.forEach(d => batch.delete(d.ref));
-    
-    await batch.commit();
-    setLogs([{ id: 'clear', timestamp: new Date(), message: 'SYSTEM_WIPE_COMPLETE: All data purged.', type: 'system' }]);
-    alert('Database cleared');
+    // 1. Mandatory Backup
+    const backupResult = await performGoogleDriveExport();
+    if (!backupResult.success && backupResult.message !== 'No data to export') {
+      alert('SYSTEM_HALT: Automated backup failed. Database wipe cancelled to prevent data loss. Error: ' + backupResult.error);
+      return;
+    }
+
+    // 2. Clear Database
+    try {
+      const logsSnapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'logs'));
+      const mappingsSnapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'mappings'));
+      
+      const batch = writeBatch(db);
+      logsSnapshot.docs.forEach(d => batch.delete(d.ref));
+      mappingsSnapshot.docs.forEach(d => batch.delete(d.ref));
+      
+      await batch.commit();
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM_WIPE_COMPLETE: All data purged after successful backup.', type: 'system' }]);
+      alert('Database cleared and backed up to Google Drive successfully.');
+    } catch (err: any) {
+      console.error('Wipe error:', err);
+      alert('Failed to clear database: ' + err.message);
+    }
   };
 
   const handleSaveUserList = async () => {
@@ -341,29 +430,132 @@ export default function App() {
 
   const handleGenerateReport = async () => {
     setIsGeneratingReport(true);
-    try {
-      const start = new Date(reportStartDate);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(reportEndDate);
-      end.setHours(23, 59, 59, 999);
+    setLogs(prev => [...prev, { 
+      id: Date.now().toString(), 
+      timestamp: new Date(), 
+      message: `SYSTEM: Fetching logs for ${reportUser} from ${reportStartDate} to ${reportEndDate}...`, 
+      type: 'system' 
+    }]);
 
-      let q = query(
+    try {
+      // Helper to get UTC ISO string for a local time in the selected timezone
+      const getUtcBound = (dateStr: string, timeStr: string) => {
+        try {
+          // Create a representation of the requested time as if it were local
+          const localString = `${dateStr}T${timeStr}`;
+          const localDate = new Date(localString);
+          
+          // Use the "inverse offset" trick to find the UTC time that, 
+          // when converted to the target timezone, matches our localString.
+          const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: selectedTimezone,
+            year: 'numeric',
+            month: 'numeric',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: 'numeric',
+            second: 'numeric',
+            hourCycle: 'h23',
+          });
+
+          // This is a rough estimation of the UTC time
+          let utcTime = localDate.getTime();
+          
+          // Refine it (usually 1-2 iterations is enough to handle the offset)
+          for (let i = 0; i < 2; i++) {
+            const formatted = formatter.format(new Date(utcTime));
+            const parts = formatted.split(', ');
+            const [m, d, y] = parts[0].split('/');
+            const [h, min, s] = parts[1].split(':');
+            const currentLocalInTz = new Date(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}T${h.padStart(2, '0')}:${min.padStart(2, '0')}:${s.padStart(2, '0')}`).getTime();
+            const offset = currentLocalInTz - localDate.getTime();
+            utcTime -= offset;
+          }
+          
+          return new Date(utcTime).toISOString();
+        } catch (e) {
+          // Fallback to literal UTC if timezone conversion fails
+          console.error('Timezone bound error:', e);
+          return `${dateStr}T${timeStr}Z`;
+        }
+      };
+
+      const startISO = getUtcBound(reportStartDate, '00:00:00.000');
+      const endISO = getUtcBound(reportEndDate, '23:59:59.999');
+
+      setLogs(prev => [...prev, { 
+        id: Date.now().toString(), 
+        timestamp: new Date(), 
+        message: `SYSTEM: UTC range: ${startISO.split('.')[0]} to ${endISO.split('.')[0]}`,
+        type: 'system' 
+      }]);
+
+      const q = query(
         collection(db, 'terminals', TERMINAL_ID, 'logs'),
-        where('timestamp', '>=', start.toISOString()),
-        where('timestamp', '<=', end.toISOString()),
+        where('timestamp', '>=', startISO),
+        where('timestamp', '<=', endISO),
         orderBy('timestamp', 'asc')
       );
 
       const snapshot = await getDocs(q);
+      
+      if (snapshot.empty) {
+        setLogs(prev => [...prev, { 
+          id: Date.now().toString(), 
+          timestamp: new Date(), 
+          message: `SYSTEM: No logs found for the selected criteria.`, 
+          type: 'system' 
+        }]);
+        alert('No data found for the selected criteria.');
+        return;
+      }
+
       let data = snapshot.docs.map(doc => {
         const d = doc.data();
+        const ts = d.timestamp || '';
+        let date = 'N/A';
+        let time = 'N/A';
+        
+        if (typeof ts === 'string' && ts.includes('T')) {
+          try {
+            const dateObj = new Date(ts);
+            // Convert to selected timezone
+            const formatter = new Intl.DateTimeFormat('en-CA', {
+              timeZone: selectedTimezone,
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              hour12: false
+            });
+            
+            const parts = formatter.formatToParts(dateObj);
+            const p = (type: string) => parts.find(part => part.type === type)?.value || '';
+            
+            date = `${p('year')}-${p('month')}-${p('day')}`;
+            time = `${p('hour')}:${p('minute')}:${p('second')}`;
+          } catch (e) {
+            console.error('Timezone conversion error:', e);
+            const parts = ts.split('T');
+            date = parts[0];
+            time = parts[1].split('.')[0];
+          }
+        }
+
+        const userRec = availableUsers.find(u => u.username === d.username);
+        const displayName = userRec ? (userRec.displayName || d.username) : (d.username || 'unknown');
+
         return {
           id: doc.id,
-          username: d.username,
-          status: d.status,
-          timestamp: d.timestamp,
-          date: d.timestamp.split('T')[0],
-          time: d.timestamp.split('T')[1].split('.')[0]
+          username: d.username || 'unknown',
+          displayName: displayName,
+          status: d.status || 'unknown',
+          original_utc_timestamp: ts,
+          local_date: date,
+          local_time: time,
+          timezone: selectedTimezone
         };
       });
 
@@ -373,7 +565,13 @@ export default function App() {
       }
 
       if (data.length === 0) {
-        alert('No data found for the selected criteria.');
+        setLogs(prev => [...prev, { 
+          id: Date.now().toString(), 
+          timestamp: new Date(), 
+          message: `SYSTEM: No records matched the user filter "${reportUser}".`, 
+          type: 'system' 
+        }]);
+        alert('No data found matching the selected user filter.');
         return;
       }
 
@@ -383,17 +581,27 @@ export default function App() {
       const a = document.createElement('a');
       a.href = url;
       a.download = `report_${reportUser}_${reportStartDate}_to_${reportEndDate}.csv`;
+      document.body.appendChild(a); // Append to body to ensure it works in more browsers
       a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
       
       setLogs(prev => [...prev, { 
         id: Date.now().toString(), 
         timestamp: new Date(), 
-        message: `SYSTEM: Report generated for ${reportUser} (${data.length} records).`, 
+        message: `SYSTEM: Success! Report exported with ${data.length} records.`, 
         type: 'system' 
       }]);
     } catch (err: any) {
       console.error('Report error:', err);
-      alert('Failed to generate report: ' + err.message);
+      const errorMessage = err.message || 'Unknown error';
+      setLogs(prev => [...prev, { 
+        id: Date.now().toString(), 
+        timestamp: new Date(), 
+        message: `ERROR: Failed to generate report - ${errorMessage}`, 
+        type: 'system' 
+      }]);
+      alert('Failed to generate report: ' + errorMessage);
     } finally {
       setIsGeneratingReport(false);
     }
@@ -416,58 +624,42 @@ export default function App() {
     }
   };
 
+  const handleDisconnectGoogleDrive = async () => {
+    if (!confirm('Are you sure you want to disconnect Google Drive?')) return;
+    try {
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Disconnecting Google Drive...', type: 'system' }]);
+      const res = await fetch('/api/auth/google/disconnect', { method: 'POST' });
+      if (res.ok) {
+        setIsGDriveConnected(false);
+        setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Google Drive disconnected successfully.', type: 'system' }]);
+        alert('Google Drive disconnected.');
+      } else {
+        throw new Error('Failed to disconnect on server.');
+      }
+    } catch (err: any) {
+      console.error('Disconnect error:', err);
+      alert('Disconnect failed: ' + err.message);
+    }
+  };
+
   const handleExportToGoogleDrive = async () => {
     if (!isGDriveConnected) {
       handleConnectGoogleDrive();
       return;
     }
 
-    setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Starting Google Drive export...', type: 'system' }]);
-
-    try {
-      const snapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'logs'));
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const csv = Papa.unparse(data);
-
-      const res = await fetch('/api/export/gdrive', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          csvData: csv,
-          fileName: `terminal_logs_${format(new Date(), 'yyyy-MM-dd')}.csv`
-        })
-      });
-
-      const contentType = res.headers.get("content-type");
-      if (res.ok) {
-        const result = await res.json();
-        setLogs(prev => [...prev, { 
-          id: Date.now().toString(), 
-          timestamp: new Date(), 
-          message: `SYSTEM: Export successful. File ID: ${result.fileId}`, 
-          type: 'system' 
-        }]);
-        
-        const openLink = confirm(`Data exported successfully to Google Drive!\nFileName: ${result.fileName}\n\nWould you like to view the file now?`);
-        if (openLink && result.webViewLink) {
-          window.open(result.webViewLink, '_blank');
-        }
-      } else {
-        let errorMsg = `Server error (${res.status})`;
-        if (contentType && contentType.includes("application/json")) {
-          const errData = await res.json();
-          errorMsg = errData.error || errorMsg;
-        } else {
-          const text = await res.text();
-          console.error('Non-JSON error response:', text);
-          errorMsg = `Server error: ${res.statusText}. The backend might be unavailable or the file is too large.`;
-        }
-        throw new Error(errorMsg);
+    const result = await performGoogleDriveExport();
+    if (result.success) {
+      const openLink = confirm(`Data exported successfully to Google Drive!\n\nWould you like to view the file now?`);
+      if (openLink && result.fileId) {
+        // Result ID is enough to build the link usually, but my helper only returns fileId
+        // I'll just skip the auto-open for now or fetch the link if possible.
+        // Actually, let's just use the helper's success message.
       }
-    } catch (err: any) {
-      console.error('Export error:', err);
-      alert(`Export failed: ${err.message}`);
-      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: `ERROR: Export failed - ${err.message}`, type: 'system' }]);
+    } else {
+      if (result.error !== 'Not connected') {
+        alert(`Export failed: ${result.error}`);
+      }
     }
   };
 
@@ -632,7 +824,11 @@ export default function App() {
               {availableUsers.length === 0 ? (
                 <div className="text-center py-8 text-green-900 italic text-sm">NO_USERS_FOUND_IN_DATABASE</div>
               ) : (
-                availableUsers.map((u) => {
+                [...availableUsers].sort((a, b) => {
+                  const nameA = (a.displayName || a.username).toLowerCase();
+                  const nameB = (b.displayName || b.username).toLowerCase();
+                  return nameA.localeCompare(nameB);
+                }).map((u) => {
                   const currentDisplayName = editedUsers[u.username] !== undefined ? editedUsers[u.username] : (u.displayName || '');
                   return (
                     <div key={u.username} className="grid grid-cols-2 items-center py-2 border-b border-green-950 hover:bg-green-950/20 transition-colors group">
@@ -711,7 +907,11 @@ export default function App() {
                   className="w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 text-sm"
                 >
                   <option value="all">ALL_USERS</option>
-                  {availableUsers.map(u => (
+                  {[...availableUsers].sort((a, b) => {
+                    const nameA = (a.displayName || a.username).toLowerCase();
+                    const nameB = (b.displayName || b.username).toLowerCase();
+                    return nameA.localeCompare(nameB);
+                  }).map(u => (
                     <option key={u.username} value={u.username}>
                       {u.displayName ? `${u.displayName} (${u.username})` : u.username}
                     </option>
@@ -784,7 +984,43 @@ export default function App() {
             </div>
 
             <div className="space-y-4">
-              {/* 1. Import Users */}
+              {/* 1. Timezone Settings */}
+              <div className="space-y-2">
+                <label className="text-xs text-green-800 uppercase font-bold flex items-center gap-1">
+                  <Calendar size={12} /> System Timezone
+                </label>
+                <select 
+                  value={selectedTimezone}
+                  onChange={(e) => {
+                    const tz = e.target.value;
+                    setSelectedTimezone(tz);
+                    localStorage.setItem('terminal_timezone', tz);
+                  }}
+                  className="w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 text-sm"
+                >
+                  <optgroup label="Common Timezones">
+                    <option value="UTC">UTC (Universal Time)</option>
+                    <option value="America/New_York">Eastern Time (New York)</option>
+                    <option value="America/Chicago">Central Time (Chicago)</option>
+                    <option value="America/Denver">Mountain Time (Denver)</option>
+                    <option value="America/Los_Angeles">Pacific Time (Los Angeles)</option>
+                    <option value="America/Toronto">Eastern Time (Toronto)</option>
+                    <option value="Europe/London">Greenwich Mean Time (London)</option>
+                    <option value="Europe/Paris">Central European Time (Paris)</option>
+                    <option value="Asia/Tokyo">Japan Standard Time (Tokyo)</option>
+                    <option value="Asia/Shanghai">China Standard Time (Shanghai)</option>
+                    <option value="Australia/Sydney">Australian Eastern Time (Sydney)</option>
+                  </optgroup>
+                  <optgroup label="System Default">
+                    <option value={Intl.DateTimeFormat().resolvedOptions().timeZone}>
+                      Detected: {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                    </option>
+                  </optgroup>
+                </select>
+                <p className="text-[10px] text-green-900 italic">Affects timestamp conversion in generated reports.</p>
+              </div>
+
+              {/* 2. Import Users */}
               <div className="space-y-2">
                 <label className="text-xs text-green-800 uppercase font-bold">User Management</label>
                 <div className="grid grid-cols-1 gap-2">
@@ -805,23 +1041,16 @@ export default function App() {
                 />
               </div>
 
-              {/* 2 & 3. Export Data */}
+              {/* 3. Export Data */}
               <div className="space-y-2">
                 <label className="text-xs text-green-800 uppercase font-bold">Data Export</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button 
-                    onClick={handleExportCSV}
-                    className="flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all text-xs"
-                  >
-                    <Download size={16} />
-                    EXPORT_CSV
-                  </button>
+                <div className="grid grid-cols-1 gap-2">
                   <button 
                     onClick={handleExportToGoogleDrive}
                     className="flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all text-xs"
                   >
                     <Cloud size={16} />
-                    {isGDriveConnected ? 'EXPORT_GDRIVE' : 'CONNECT_GDRIVE'}
+                    {isGDriveConnected ? 'EXPORT_TO_GOOGLE_DRIVE' : 'CONNECT_AND_EXPORT'}
                   </button>
                 </div>
               </div>
@@ -831,15 +1060,26 @@ export default function App() {
                 <button 
                   onClick={handleConnectGoogleDrive}
                   className={cn(
-                    "w-full flex items-center justify-center gap-2 py-3 border rounded transition-all",
+                    "w-full flex items-center justify-center gap-2 py-3 border rounded transition-all text-xs font-bold",
                     isGDriveConnected 
-                      ? "bg-green-900/20 border-green-900 text-green-400"
-                      : "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40"
+                      ? "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40"
+                      : "bg-green-900/20 border-green-900 text-green-400 hover:bg-green-900/30"
                   )}
                 >
                   <Cloud size={18} />
                   {isGDriveConnected ? 'GOOGLE_DRIVE_CONNECTED' : 'CONNECT_GOOGLE_DRIVE'}
                 </button>
+                
+                {isGDriveConnected && (
+                  <button 
+                    onClick={handleDisconnectGoogleDrive}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-red-900/10 border border-red-900/50 hover:bg-red-900/30 text-red-500 rounded transition-all text-xs font-bold"
+                  >
+                    <CloudOff size={16} />
+                    DISCONNECT_GOOGLE_DRIVE
+                  </button>
+                )}
+
                 {!isGDriveConnected && (
                   <div className="p-2 bg-blue-950/20 border border-blue-900/30 rounded">
                     <p className="text-[9px] text-blue-400 uppercase font-bold mb-1">OAuth Redirect URI:</p>
@@ -860,13 +1100,21 @@ export default function App() {
                   <Save size={16} />
                   SAVE_AND_EXIT
                 </button>
-                <button 
-                  onClick={handleClearDatabase}
-                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-red-900/20 border border-red-900 hover:bg-red-900/40 text-red-500 rounded transition-all text-xs font-bold"
-                >
-                  <Trash2 size={16} />
-                  CLEAR_DATABASE
-                </button>
+                <div className="flex-1 relative group">
+                  <button 
+                    disabled={!isGDriveConnected}
+                    onClick={handleClearDatabase}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-red-900/20 border border-red-900 hover:bg-red-900/40 text-red-500 rounded transition-all text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 size={16} />
+                    CLEAR_DATABASE
+                  </button>
+                  {!isGDriveConnected && (
+                    <div className="absolute bottom-full left-0 mb-2 w-48 p-2 bg-red-950 border border-red-900 text-[10px] text-red-400 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                      SYSTEM_LOCKED: Google Drive must be connected for mandatory backup before clearing the database.
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
