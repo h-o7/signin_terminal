@@ -1,16 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, Trash2, Save } from 'lucide-react';
+import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { db, auth, signIn, signOut } from './firebase';
-import { collection, doc, setDoc, addDoc, onSnapshot, query, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
+import { collection, doc, setDoc, addDoc, onSnapshot, query, orderBy, limit, getDocs, writeBatch, where, deleteDoc } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import Papa from 'papaparse';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+interface UserRecord {
+  username: string;
+  displayName?: string;
 }
 
 interface LogEntry {
@@ -35,6 +40,15 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showReports, setShowReports] = useState(false);
+  const [showUserList, setShowUserList] = useState(false);
+  const [editedUsers, setEditedUsers] = useState<{[username: string]: string}>({});
+  const [isSavingUserList, setIsSavingUserList] = useState(false);
+  const [reportUser, setReportUser] = useState<string>('all');
+  const [reportStartDate, setReportStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [reportEndDate, setReportEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [availableUsers, setAvailableUsers] = useState<UserRecord[]>([]);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [input, setInput] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: 'init', timestamp: new Date(), message: 'SYSTEM_BOOT_COMPLETE: Terminal ready.', type: 'system' }
@@ -51,6 +65,9 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
+      if (u) {
+        setIsStarted(true);
+      }
       setIsAuthReady(true);
     });
     return () => unsubscribe();
@@ -65,7 +82,7 @@ export default function App() {
           if (contentType && contentType.indexOf("application/json") !== -1) {
             return res.json();
           }
-          throw new Error("SERVER_NOT_FOUND: Environment may be static-only.");
+          throw new Error("STATIC_HOSTING_DETECTED: This environment does not support a Node.js backend. Features like Google Drive integration require the AI Studio Preview URL (ais-pre-...).");
         })
         .then(data => setIsGDriveConnected(data.connected))
         .catch(err => {
@@ -92,6 +109,7 @@ export default function App() {
 
     const unsubscribeUsers = onSnapshot(collection(db, 'terminals', TERMINAL_ID, 'mappings'), (snapshot) => {
       const statuses: UserStatusMap = {};
+      const users: UserRecord[] = [];
       snapshot.forEach((doc) => {
         const data = doc.data();
         statuses[doc.id] = {
@@ -99,11 +117,25 @@ export default function App() {
           lastDate: data.lastTimestamp?.split('T')[0] || '',
           lastFullTimestamp: data.lastTimestamp || ''
         };
+        users.push({
+          username: doc.id,
+          displayName: data.displayName
+        });
       });
       setUserStatuses(statuses);
+      setAvailableUsers(users);
     });
 
-    const q = query(collection(db, 'terminals', TERMINAL_ID, 'logs'), orderBy('timestamp', 'desc'), limit(50));
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTodayISO = startOfToday.toISOString();
+
+    const q = query(
+      collection(db, 'terminals', TERMINAL_ID, 'logs'), 
+      where('timestamp', '>=', startOfTodayISO),
+      orderBy('timestamp', 'desc'), 
+      limit(50)
+    );
     const unsubscribeLogs = onSnapshot(q, (snapshot) => {
       const newLogs: LogEntry[] = [];
       snapshot.docs.reverse().forEach((doc) => {
@@ -146,6 +178,9 @@ export default function App() {
       const currentDate = format(timestamp, 'yyyy-MM-dd');
 
       const currentStatus = userStatuses[userInput];
+      const mapping = availableUsers.find(u => u.username === userInput);
+      const displayName = mapping?.displayName || '';
+
       let nextStatus: 'logged in' | 'logged out' = 'logged in';
       if (currentStatus && currentStatus.lastDate === currentDate) {
         nextStatus = currentStatus.lastStatus === 'logged in' ? 'logged out' : 'logged in';
@@ -155,11 +190,16 @@ export default function App() {
         await setDoc(doc(db, 'terminals', TERMINAL_ID, 'mappings', userInput), {
           username: userInput,
           lastStatus: nextStatus,
-          lastTimestamp: formattedTime
+          lastTimestamp: formattedTime,
+          // Preservation of displayName is handled by merge: true, 
+          // but we explicitly pass it if we found it to be extra safe 
+          // or if it's a new user without a mapping yet.
+          ...(displayName ? { displayName } : {})
         }, { merge: true });
 
         await addDoc(collection(db, 'terminals', TERMINAL_ID, 'logs'), {
           username: userInput,
+          displayName: displayName,
           status: nextStatus,
           timestamp: formattedTime
         });
@@ -173,22 +213,69 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Starting CSV import...', type: 'system' }]);
+
     Papa.parse(file, {
       header: true,
+      skipEmptyLines: true,
+      transformHeader: (header) => header.trim(),
       complete: async (results) => {
-        const batch = writeBatch(db);
-        results.data.forEach((row: any) => {
-          if (row.username) {
-            const userRef = doc(db, 'terminals', TERMINAL_ID, 'mappings', row.username);
-            batch.set(userRef, {
-              username: row.username,
-              lastStatus: row.lastStatus || 'logged out',
-              lastTimestamp: row.lastTimestamp || new Date().toISOString()
-            }, { merge: true });
+        try {
+          const batch = writeBatch(db);
+          let count = 0;
+          
+          results.data.forEach((row: any) => {
+            // Find recognized columns regardless of case/spaces
+            const getVal = (possibleNames: string[]) => {
+              const key = Object.keys(row).find(k => 
+                possibleNames.some(name => k.toLowerCase().replace(/[^a-z0-9]/g, '') === name.toLowerCase().replace(/[^a-z0-9]/g, ''))
+              );
+              return key ? row[key] : null;
+            };
+
+            let username = getVal(['username', 'id', 'fobid', 'cardid', 'uid', 'user']);
+            const displayName = getVal(['displayname', 'name', 'fullname', 'userdesc']);
+            
+            // Fallback: If no recognized header for ID, use the first column
+            if (!username && Object.keys(row).length > 0) {
+              const firstKey = Object.keys(row)[0];
+              username = row[firstKey];
+            }
+            
+            if (username) {
+              const cleanedUsername = String(username).trim();
+              if (cleanedUsername) {
+                const userRef = doc(db, 'terminals', TERMINAL_ID, 'mappings', cleanedUsername);
+                batch.set(userRef, {
+                  username: cleanedUsername,
+                  lastStatus: row.lastStatus || 'logged out',
+                  lastTimestamp: row.lastTimestamp || new Date().toISOString(),
+                  ...(displayName ? { displayName: String(displayName).trim() } : {})
+                }, { merge: true });
+                count++;
+              }
+            }
+          });
+
+          if (count > 0) {
+            await batch.commit();
+            setLogs(prev => [...prev, { 
+              id: Date.now().toString(), 
+              timestamp: new Date(), 
+              message: `SYSTEM: Import complete. Registered ${count} users.`, 
+              type: 'system' 
+            }]);
+            alert(`Import successful! ${count} users added/updated.`);
+          } else {
+            setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Import failed - No valid data found. Ensure CSV has column "username" or "id".', type: 'system' }]);
+            alert('Import failed: No valid users found in CSV. Please verify column headers (e.g., username, displayName).');
           }
-        });
-        await batch.commit();
-        alert('Import complete');
+        } catch (err: any) {
+          console.error('Import error:', err);
+          alert('Import failed: ' + err.message);
+        } finally {
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        }
       }
     });
   };
@@ -220,13 +307,105 @@ export default function App() {
     alert('Database cleared');
   };
 
+  const handleSaveUserList = async () => {
+    setIsSavingUserList(true);
+    try {
+      const batch = writeBatch(db);
+      let count = 0;
+      
+      Object.entries(editedUsers).forEach(([username, displayName]) => {
+        const userRef = doc(db, 'terminals', TERMINAL_ID, 'mappings', username);
+        batch.update(userRef, { displayName });
+        count++;
+      });
+
+      if (count > 0) {
+        await batch.commit();
+        setLogs(prev => [...prev, { 
+          id: Date.now().toString(), 
+          timestamp: new Date(), 
+          message: `SYSTEM: Updated ${count} user display names manually.`, 
+          type: 'system' 
+        }]);
+      }
+      
+      setShowUserList(false);
+      setEditedUsers({});
+    } catch (err: any) {
+      console.error('Save error:', err);
+      alert('Failed to save changes: ' + err.message);
+    } finally {
+      setIsSavingUserList(false);
+    }
+  };
+
+  const handleGenerateReport = async () => {
+    setIsGeneratingReport(true);
+    try {
+      const start = new Date(reportStartDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(reportEndDate);
+      end.setHours(23, 59, 59, 999);
+
+      let q = query(
+        collection(db, 'terminals', TERMINAL_ID, 'logs'),
+        where('timestamp', '>=', start.toISOString()),
+        where('timestamp', '<=', end.toISOString()),
+        orderBy('timestamp', 'asc')
+      );
+
+      const snapshot = await getDocs(q);
+      let data = snapshot.docs.map(doc => {
+        const d = doc.data();
+        return {
+          id: doc.id,
+          username: d.username,
+          status: d.status,
+          timestamp: d.timestamp,
+          date: d.timestamp.split('T')[0],
+          time: d.timestamp.split('T')[1].split('.')[0]
+        };
+      });
+
+      // Client side filter for user since we can't easily do multiple inequality/equality filters without indexes
+      if (reportUser !== 'all') {
+        data = data.filter(d => d.username === reportUser);
+      }
+
+      if (data.length === 0) {
+        alert('No data found for the selected criteria.');
+        return;
+      }
+
+      const csv = Papa.unparse(data);
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `report_${reportUser}_${reportStartDate}_to_${reportEndDate}.csv`;
+      a.click();
+      
+      setLogs(prev => [...prev, { 
+        id: Date.now().toString(), 
+        timestamp: new Date(), 
+        message: `SYSTEM: Report generated for ${reportUser} (${data.length} records).`, 
+        type: 'system' 
+      }]);
+    } catch (err: any) {
+      console.error('Report error:', err);
+      alert('Failed to generate report: ' + err.message);
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  };
+
   const handleConnectGoogleDrive = async () => {
     try {
       const res = await fetch('/api/auth/google/url');
       const contentType = res.headers.get("content-type");
       
       if (!contentType || contentType.indexOf("application/json") === -1) {
-        throw new Error("BACKEND_UNAVAILABLE: OAuth requires a Node.js environment. Please use the Preview/Shared URL (ais-pre-...).");
+        throw new Error("BACKEND_UNAVAILABLE: This feature requires a Node.js backend. It will NOT work on Firebase Hosting (web.app). Please use the AI Studio Shared/Preview URL.");
       }
 
       const { url } = await res.json();
@@ -261,8 +440,18 @@ export default function App() {
 
       const contentType = res.headers.get("content-type");
       if (res.ok) {
-        setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Export successful.', type: 'system' }]);
-        alert('Data exported to Google Drive successfully!');
+        const result = await res.json();
+        setLogs(prev => [...prev, { 
+          id: Date.now().toString(), 
+          timestamp: new Date(), 
+          message: `SYSTEM: Export successful. File ID: ${result.fileId}`, 
+          type: 'system' 
+        }]);
+        
+        const openLink = confirm(`Data exported successfully to Google Drive!\nFileName: ${result.fileName}\n\nWould you like to view the file now?`);
+        if (openLink && result.webViewLink) {
+          window.open(result.webViewLink, '_blank');
+        }
       } else {
         let errorMsg = `Server error (${res.status})`;
         if (contentType && contentType.includes("application/json")) {
@@ -281,6 +470,10 @@ export default function App() {
       setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: `ERROR: Export failed - ${err.message}`, type: 'system' }]);
     }
   };
+
+  if (!isAuthReady) {
+    return <div className="min-h-screen bg-black flex items-center justify-center font-mono text-green-500">INITIALIZING_SYSTEM...</div>;
+  }
 
   if (!isStarted) {
     return (
@@ -351,7 +544,25 @@ export default function App() {
           {user ? (
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-green-800">{user.email}</span>
-              <button onClick={() => setShowSettings(true)} className="p-1 hover:bg-green-900/30 rounded text-green-400">
+              <button 
+                onClick={() => setShowUserList(true)} 
+                className="p-1 hover:bg-green-900/30 rounded text-green-400"
+                title="Registered Users"
+              >
+                <Users size={18} />
+              </button>
+              <button 
+                onClick={() => setShowReports(true)} 
+                className="p-1 hover:bg-green-900/30 rounded text-green-400"
+                title="Generate Reports"
+              >
+                <FileSpreadsheet size={18} />
+              </button>
+              <button 
+                onClick={() => setShowSettings(true)} 
+                className="p-1 hover:bg-green-900/30 rounded text-green-400"
+                title="Settings"
+              >
                 <Settings size={18} />
               </button>
               <button onClick={signOut} className="text-[10px] border border-red-900 px-2 py-1 hover:bg-red-900/20 text-red-700 rounded">LOGOUT</button>
@@ -371,7 +582,7 @@ export default function App() {
       >
         {logs.map((log) => (
           <div key={log.id} className="flex gap-3 text-sm animate-in fade-in slide-in-from-left-2 duration-300">
-            <span className="text-green-900 shrink-0">[{format(log.timestamp, 'HH:mm:ss')}]</span>
+            <span className="text-green-900 shrink-0">[{format(log.timestamp, 'yyyy-MM-dd HH:mm:ss')}]</span>
             <span className={cn(
               "break-all",
               log.type === 'system' ? 'text-blue-400 italic' : 
@@ -398,6 +609,166 @@ export default function App() {
         />
       </div>
 
+      {/* User List Modal */}
+      {showUserList && (
+        <div className="absolute inset-0 bg-black/90 z-[60] flex items-center justify-center p-4">
+          <div className="max-w-xl w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)] flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between border-b border-green-900 pb-4 shrink-0">
+              <div className="flex items-center gap-2">
+                <Users className="text-green-400" size={20} />
+                <h2 className="text-lg font-bold text-white">REGISTERED_USERS_DATABASE</h2>
+              </div>
+              <button onClick={() => { setShowUserList(false); setEditedUsers({}); }} className="text-green-900 hover:text-green-400 transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+              <div className="grid grid-cols-2 text-[10px] text-green-800 font-bold uppercase border-b border-green-900/50 pb-2 mb-2">
+                <div>FOB_ID / USERNAME</div>
+                <div>DISPLAY_NAME (EDITABLE)</div>
+              </div>
+              
+              {availableUsers.length === 0 ? (
+                <div className="text-center py-8 text-green-900 italic text-sm">NO_USERS_FOUND_IN_DATABASE</div>
+              ) : (
+                availableUsers.map((u) => {
+                  const currentDisplayName = editedUsers[u.username] !== undefined ? editedUsers[u.username] : (u.displayName || '');
+                  return (
+                    <div key={u.username} className="grid grid-cols-2 items-center py-2 border-b border-green-950 hover:bg-green-950/20 transition-colors group">
+                      <div className="text-green-400 text-sm font-bold flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-green-500/50 group-hover:animate-ping" />
+                        {u.username}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input 
+                          type="text"
+                          value={currentDisplayName}
+                          onChange={(e) => setEditedUsers(prev => ({ ...prev, [u.username]: e.target.value }))}
+                          className="flex-1 bg-black border border-green-900/50 p-1 text-green-600 text-sm focus:border-green-400 outline-none rounded"
+                          placeholder="ENTER_DISPLAY_NAME..."
+                        />
+                        <button 
+                          onClick={async () => {
+                            if (confirm(`DELETE USER ${u.username}?`)) {
+                              await deleteDoc(doc(db, 'terminals', TERMINAL_ID, 'mappings', u.username));
+                            }
+                          }}
+                          className="text-red-900 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all p-1"
+                          title="Delete User"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-green-900 shrink-0 flex gap-2">
+              <button 
+                onClick={handleSaveUserList}
+                disabled={isSavingUserList}
+                className="flex-1 flex items-center justify-center gap-2 py-3 bg-green-500 hover:bg-green-400 text-black rounded transition-all text-xs font-bold disabled:opacity-50"
+              >
+                {isSavingUserList ? <Activity className="animate-spin" size={16} /> : <Save size={16} />}
+                SAVE_AND_EXIT
+              </button>
+              <button 
+                onClick={() => { setShowUserList(false); setEditedUsers({}); }}
+                className="flex-1 py-3 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all text-xs font-bold"
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reports Modal */}
+      {showReports && (
+        <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
+          <div className="max-w-md w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)]">
+            <div className="flex items-center justify-between border-b border-green-900 pb-4">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="text-green-400" size={20} />
+                <h2 className="text-lg font-bold text-white">GENERATE_REPORT</h2>
+              </div>
+              <button onClick={() => setShowReports(false)} className="text-green-900 hover:text-green-400 transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs text-green-800 uppercase font-bold flex items-center gap-1">
+                  <UserIcon size={12} /> Target User
+                </label>
+                <select 
+                  value={reportUser}
+                  onChange={(e) => setReportUser(e.target.value)}
+                  className="w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 text-sm"
+                >
+                  <option value="all">ALL_USERS</option>
+                  {availableUsers.map(u => (
+                    <option key={u.username} value={u.username}>
+                      {u.displayName ? `${u.displayName} (${u.username})` : u.username}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs text-green-800 uppercase font-bold flex items-center gap-1">
+                    <Calendar size={12} /> Start Date
+                  </label>
+                  <input 
+                    type="date"
+                    value={reportStartDate}
+                    onChange={(e) => setReportStartDate(e.target.value)}
+                    className="w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 text-sm [color-scheme:dark]"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs text-green-800 uppercase font-bold flex items-center gap-1">
+                    <Calendar size={12} /> End Date
+                  </label>
+                  <input 
+                    type="date"
+                    value={reportEndDate}
+                    onChange={(e) => setReportEndDate(e.target.value)}
+                    className="w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 text-sm [color-scheme:dark]"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-green-900 flex gap-2">
+                <button 
+                  onClick={handleGenerateReport}
+                  disabled={isGeneratingReport}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-green-500 hover:bg-green-400 text-black rounded transition-all text-sm font-bold disabled:opacity-50"
+                >
+                  {isGeneratingReport ? (
+                    <Activity className="animate-spin" size={18} />
+                  ) : (
+                    <Search size={18} />
+                  )}
+                  FETCH_LOGS_AND_EXPORT
+                </button>
+                <button 
+                  onClick={() => setShowReports(false)}
+                  className="px-4 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all text-xs font-bold"
+                >
+                  CANCEL
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Settings Modal */}
       {showSettings && (
         <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
@@ -416,13 +787,15 @@ export default function App() {
               {/* 1. Import Users */}
               <div className="space-y-2">
                 <label className="text-xs text-green-800 uppercase font-bold">User Management</label>
-                <button 
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all"
-                >
-                  <Upload size={18} />
-                  IMPORT_USERS_VIA_CSV
-                </button>
+                <div className="grid grid-cols-1 gap-2">
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all"
+                  >
+                    <Upload size={18} />
+                    IMPORT_USERS_VIA_CSV
+                  </button>
+                </div>
                 <input 
                   ref={fileInputRef}
                   type="file" 
@@ -481,18 +854,18 @@ export default function App() {
               {/* 4. Bottom Buttons */}
               <div className="pt-4 border-t border-green-900 flex gap-2">
                 <button 
-                  onClick={handleClearDatabase}
-                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-red-900/20 border border-red-900 hover:bg-red-900/40 text-red-500 rounded transition-all text-xs font-bold"
-                >
-                  <Trash2 size={16} />
-                  CLEAR_DATABASE
-                </button>
-                <button 
                   onClick={() => setShowSettings(false)}
                   className="flex-1 flex items-center justify-center gap-2 py-3 bg-green-900/20 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all text-xs font-bold"
                 >
                   <Save size={16} />
                   SAVE_AND_EXIT
+                </button>
+                <button 
+                  onClick={handleClearDatabase}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-red-900/20 border border-red-900 hover:bg-red-900/40 text-red-500 rounded transition-all text-xs font-bold"
+                >
+                  <Trash2 size={16} />
+                  CLEAR_DATABASE
                 </button>
               </div>
             </div>

@@ -16,11 +16,18 @@ app.use(cookieParser());
 // Favicon redirect
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  '' // Redirect URI will be set dynamically
-);
+let oauth2Client: any = null;
+
+function getOAuth2Client() {
+  if (!oauth2Client) {
+    oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      '' // Redirect URI will be set dynamically
+    );
+  }
+  return oauth2Client;
+}
 
 const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
 
@@ -42,7 +49,8 @@ app.get('/api/auth/google/url', (req, res) => {
   const redirectUri = getRedirectUri(req);
   console.log(`[AUTH] Requesting OAuth with redirect_uri: ${redirectUri}`);
   
-  const url = oauth2Client.generateAuthUrl({
+  const client = getOAuth2Client();
+  const url = client.generateAuthUrl({
     access_type: 'offline',
     scope: SCOPES,
     redirect_uri: redirectUri,
@@ -57,8 +65,9 @@ app.get(['/auth/callback', '/auth/callback/'], async (req, res) => {
   const redirectUri = getRedirectUri(req);
   console.log(`[AUTH] Handling callback with redirect_uri: ${redirectUri}`);
 
+  const client = getOAuth2Client();
   try {
-    const { tokens } = await oauth2Client.getToken({
+    const { tokens } = await client.getToken({
       code: code as string,
       redirect_uri: redirectUri
     });
@@ -112,8 +121,9 @@ app.post('/api/export/gdrive', async (req, res) => {
   const { csvData, fileName } = req.body;
 
   try {
-    oauth2Client.setCredentials({ refresh_token: refreshToken });
-    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    const client = getOAuth2Client();
+    client.setCredentials({ refresh_token: refreshToken });
+    const drive = google.drive({ version: 'v3', auth: client });
 
     const fileMetadata = {
       name: fileName || `terminal_export_${new Date().toISOString()}.csv`,
@@ -127,10 +137,11 @@ app.post('/api/export/gdrive', async (req, res) => {
     const file = await drive.files.create({
       requestBody: fileMetadata,
       media: media,
-      fields: 'id',
+      fields: 'id, name, webViewLink',
     });
 
-    res.json({ success: true, fileId: file.data.id });
+    console.log(`[DRIVE] File created successfully. ID: ${file.data.id}, Name: ${file.data.name}`);
+    res.json({ success: true, fileId: file.data.id, fileName: file.data.name, webViewLink: file.data.webViewLink });
   } catch (error: any) {
     console.error('Export error:', error);
     
@@ -150,7 +161,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    app.get('*all', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
