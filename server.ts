@@ -13,6 +13,9 @@ const PORT = 3000;
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
+// Favicon redirect
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
@@ -128,9 +131,12 @@ app.post('/api/export/gdrive', async (req, res) => {
     });
 
     res.json({ success: true, fileId: file.data.id });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Export error:', error);
-    res.status(500).json({ error: 'Failed to export to Google Drive' });
+    
+    // Extract specific error message from Google if available
+    const message = error.response?.data?.error?.message || error.message || 'Failed to export to Google Drive';
+    res.status(500).json({ error: message });
   }
 });
 
