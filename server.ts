@@ -307,7 +307,7 @@ async function startServer() {
       app.use(express.static(distPath));
       
       // Catch-all route for SPA - Express 5 compatible wildcard
-      app.get('(.*)', (req, res) => {
+      app.get('*all', (req, res) => {
         const indexPath = path.join(distPath, 'index.html');
         console.log(`[SERVER] Serving SPA for: ${req.url}`);
         res.sendFile(indexPath, (err) => {
