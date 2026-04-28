@@ -279,8 +279,8 @@ async function startServer() {
       
       app.use(express.static(distPath));
       
-      // Catch-all route for SPA - Standard '*' for Express 4/5 compatibility
-      app.get('*', (req, res) => {
+      // Catch-all route for SPA - Compatible with Express 4/5
+      app.get('*all', (req, res) => {
         const indexPath = path.join(distPath, 'index.html');
         console.log(`[SERVER] Serving SPA for: ${req.url}`);
         res.sendFile(indexPath, (err) => {
