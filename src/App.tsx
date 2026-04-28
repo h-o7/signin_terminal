@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users } from 'lucide-react';
+import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users, AlertTriangle, RotateCcw } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -7,6 +7,8 @@ import { db, auth, signIn, signOut } from './firebase';
 import { collection, doc, setDoc, addDoc, onSnapshot, query, orderBy, limit, getDocs, writeBatch, where, deleteDoc } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import Papa from 'papaparse';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -50,8 +52,16 @@ export default function App() {
   const [selectedTimezone, setSelectedTimezone] = useState<string>(
     localStorage.getItem('terminal_timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone
   );
+  const [fontSize, setFontSize] = useState<'normal' | 'large'>('normal');
+  const [settingsTab, setSettingsTab] = useState<'general' | 'api'>('general');
+  const [googleClientId, setGoogleClientId] = useState('');
+  const [googleClientSecret, setGoogleClientSecret] = useState('');
+  const [appUrl, setAppUrl] = useState('');
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [showSaveConfirm, setShowSaveConfirm] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<UserRecord[]>([]);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [isExportingAll, setIsExportingAll] = useState(false);
   const [input, setInput] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: 'init', timestamp: new Date(), message: 'SYSTEM_BOOT_COMPLETE: Terminal ready.', type: 'system' }
@@ -93,6 +103,72 @@ export default function App() {
         });
     }
   }, [user]);
+
+  // Load Settings
+  useEffect(() => {
+    if (showSettings) {
+      fetch('/api/settings')
+        .then(res => res.json())
+        .then(data => {
+          setGoogleClientId(data.googleClientId || '');
+          setGoogleClientSecret(data.googleClientSecret || '');
+          setAppUrl(data.appUrl || window.location.origin);
+        })
+        .catch(err => console.error('Failed to load settings:', err));
+    }
+  }, [showSettings]);
+
+  const handleSaveApiSettings = async () => {
+    if (!showSaveConfirm) {
+      setShowSaveConfirm(true);
+      return;
+    }
+
+    setShowSaveConfirm(false);
+    setIsSavingSettings(true);
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          googleClientId,
+          googleClientSecret,
+          appUrl
+        })
+      });
+      if (res.ok) {
+        alert('API Settings saved successfully. The server has been updated.');
+      } else {
+        throw new Error('Failed to save settings');
+      }
+    } catch (err: any) {
+      alert(`Error saving settings: ${err.message}`);
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
+
+  const handleResetToDefaults = async () => {
+    if (!window.confirm('Are you sure you want to reset API settings to system defaults? This will erase custom Client ID and Secret.')) {
+      return;
+    }
+    
+    try {
+      const res = await fetch('/api/settings/defaults');
+      const defaults = await res.json();
+      
+      setGoogleClientId(defaults.googleClientId || '');
+      setGoogleClientSecret(defaults.googleClientSecret || '');
+      setAppUrl(defaults.appUrl || window.location.origin);
+      
+      // Also tell server to delete settings.json
+      await fetch('/api/settings/reset', { method: 'POST' });
+      
+      alert('Settings reset to defaults.');
+    } catch (err) {
+      console.error('Failed to reset settings:', err);
+    }
+  };
 
   // Listen for OAuth Success
   useEffect(() => {
@@ -236,7 +312,7 @@ export default function App() {
               return key ? row[key] : null;
             };
 
-            let username = getVal(['username', 'id', 'fobid', 'cardid', 'uid', 'user']);
+            let username = getVal(['fobid', 'username', 'id', 'cardid', 'uid', 'user']);
             const displayName = getVal(['displayname', 'name', 'fullname', 'userdesc']);
             
             // Fallback: If no recognized header for ID, use the first column
@@ -270,8 +346,8 @@ export default function App() {
             }]);
             alert(`Import successful! ${count} users added/updated.`);
           } else {
-            setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Import failed - No valid data found. Ensure CSV has column "username" or "id".', type: 'system' }]);
-            alert('Import failed: No valid users found in CSV. Please verify column headers (e.g., username, displayName).');
+            setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Import failed - No valid data found. Ensure CSV has column "fob_id" or "username".', type: 'system' }]);
+            alert('Import failed: No valid users found in CSV. Please verify column headers (e.g., fob_id, displayName).');
           }
         } catch (err: any) {
           console.error('Import error:', err);
@@ -605,6 +681,169 @@ export default function App() {
     } finally {
       setIsGeneratingReport(false);
     }
+  };
+
+  const handleExportAllAsZip = async () => {
+    setIsExportingAll(true);
+    setLogs(prev => [...prev, { 
+      id: Date.now().toString(), 
+      timestamp: new Date(), 
+      message: `SYSTEM: Initializing full database export for period ${reportStartDate} to ${reportEndDate}...`, 
+      type: 'system' 
+    }]);
+
+    try {
+      // Helper for UTC bounds (copied from handleGenerateReport to ensure consistency)
+      const getUtcBound = (dateStr: string, timeStr: string) => {
+        try {
+          const localString = `${dateStr}T${timeStr}`;
+          const localDate = new Date(localString);
+          const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: selectedTimezone,
+            year: 'numeric',
+            month: 'numeric',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: 'numeric',
+            second: 'numeric',
+            hourCycle: 'h23',
+          });
+          let utcTime = localDate.getTime();
+          for (let i = 0; i < 2; i++) {
+            const formatted = formatter.format(new Date(utcTime));
+            const parts = formatted.split(', ');
+            const [m, d, y] = parts[0].split('/');
+            const [h, min, s] = parts[1].split(':');
+            const currentLocalInTz = new Date(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}T${h.padStart(2, '0')}:${min.padStart(2, '0')}:${s.padStart(2, '0')}`).getTime();
+            const offset = currentLocalInTz - localDate.getTime();
+            utcTime -= offset;
+          }
+          return new Date(utcTime).toISOString();
+        } catch (e) {
+          return `${dateStr}T${timeStr}Z`;
+        }
+      };
+
+      const startISO = getUtcBound(reportStartDate, '00:00:00.000');
+      const endISO = getUtcBound(reportEndDate, '23:59:59.999');
+
+      const q = query(
+        collection(db, 'terminals', TERMINAL_ID, 'logs'),
+        where('timestamp', '>=', startISO),
+        where('timestamp', '<=', endISO),
+        orderBy('timestamp', 'asc')
+      );
+
+      const snapshot = await getDocs(q);
+      
+      if (snapshot.empty) {
+        setLogs(prev => [...prev, { 
+          id: Date.now().toString(), 
+          timestamp: new Date(), 
+          message: `SYSTEM: No logs found in specified range. Aborting ZIP export.`, 
+          type: 'system' 
+        }]);
+        alert('No data found for the selected dates.');
+        return;
+      }
+
+      // 1. Group records by user
+      const usersData: { [key: string]: any[] } = {};
+      
+      snapshot.docs.forEach(doc => {
+        const d = doc.data();
+        const username = d.username || 'unknown';
+        const ts = d.timestamp || '';
+        
+        // Timezone conversion logic (reused from handleGenerateReport)
+        let date = 'N/A';
+        let time = 'N/A';
+        if (typeof ts === 'string' && ts.includes('T')) {
+          try {
+            const dateObj = new Date(ts);
+            const formatter = new Intl.DateTimeFormat('en-CA', {
+              timeZone: selectedTimezone,
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              hour12: false
+            });
+            const parts = formatter.formatToParts(dateObj);
+            const p = (type: string) => parts.find(part => part.type === type)?.value || '';
+            date = `${p('year')}-${p('month')}-${p('day')}`;
+            time = `${p('hour')}:${p('minute')}:${p('second')}`;
+          } catch (e) {
+            const parts = ts.split('T');
+            date = parts[0];
+            time = parts[1].split('.')[0];
+          }
+        }
+
+        const userRec = availableUsers.find(u => u.username === username);
+        const displayName = userRec ? (userRec.displayName || username) : (d.displayName || username);
+
+        const record = {
+          username: username,
+          displayName: displayName,
+          status: d.status || 'unknown',
+          utc_timestamp: ts,
+          local_date: date,
+          local_time: time,
+          timezone: selectedTimezone
+        };
+
+        if (!usersData[username]) usersData[username] = [];
+        usersData[username].push(record);
+      });
+
+      // 2. Create ZIP
+      const zip = new JSZip();
+      const folderName = `all_users_report_${reportStartDate}_to_${reportEndDate}`;
+      const folder = zip.folder(folderName);
+
+      if (!folder) throw new Error('Failed to create ZIP folder');
+
+      Object.entries(usersData).forEach(([username, data]) => {
+        const userRec = availableUsers.find(u => u.username === username);
+        const displayName = userRec?.displayName || username;
+        // Clean filename (remove characters that might cause issues)
+        const safeName = `${displayName}_${username}`.replace(/[^a-z0-9_\-]/gi, '_');
+        const csv = Papa.unparse(data);
+        folder.file(`${safeName}.csv`, csv);
+      });
+
+      // 3. Generate and Save
+      const content = await zip.generateAsync({ type: 'blob' });
+      saveAs(content, `${folderName}.zip`);
+
+      setLogs(prev => [...prev, { 
+        id: Date.now().toString(), 
+        timestamp: new Date(), 
+        message: `SYSTEM_EXPORT_SUCCESS: Generated ZIP with ${Object.keys(usersData).length} individual user files.`, 
+        type: 'system' 
+      }]);
+    } catch (err: any) {
+      console.error('ZIP Export error:', err);
+      alert('ZIP Export failed: ' + err.message);
+    } finally {
+      setIsExportingAll(false);
+    }
+  };
+
+  const downloadCsvTemplate = () => {
+    const csvContent = "fob_id,displayName\n1001,John Doe\n1002,Jane Smith";
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'user_import_template.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
   };
 
   const handleConnectGoogleDrive = async () => {
@@ -955,7 +1194,20 @@ export default function App() {
                   ) : (
                     <Search size={18} />
                   )}
-                  FETCH_LOGS_AND_EXPORT
+                  EXPORT_SELECTED_USER
+                </button>
+                <button 
+                  onClick={handleExportAllAsZip}
+                  disabled={isExportingAll || isGeneratingReport}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded transition-all text-xs font-bold disabled:opacity-50"
+                  title="Export all users to individual CSVs in a ZIP"
+                >
+                  {isExportingAll ? (
+                    <Activity className="animate-spin" size={16} />
+                  ) : (
+                    <Download size={16} />
+                  )}
+                  EXPORT_ALL_TO_ZIP
                 </button>
                 <button 
                   onClick={() => setShowReports(false)}
@@ -972,130 +1224,266 @@ export default function App() {
       {/* Settings Modal */}
       {showSettings && (
         <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
-          <div className="max-w-md w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)]">
+          <div className={cn(
+            "max-w-md w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)]",
+            fontSize === 'large' ? "scale-105" : ""
+          )}>
             <div className="flex items-center justify-between border-b border-green-900 pb-4">
-              <div className="flex items-center gap-2">
-                <Settings className="text-green-400" size={20} />
-                <h2 className="text-lg font-bold text-white">SYSTEM_SETTINGS</h2>
-              </div>
-              <button onClick={() => setShowSettings(false)} className="text-green-900 hover:text-green-400 transition-colors">
-                <X size={24} />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              {/* 1. Timezone Settings */}
-              <div className="space-y-2">
-                <label className="text-xs text-green-800 uppercase font-bold flex items-center gap-1">
-                  <Calendar size={12} /> System Timezone
-                </label>
-                <select 
-                  value={selectedTimezone}
-                  onChange={(e) => {
-                    const tz = e.target.value;
-                    setSelectedTimezone(tz);
-                    localStorage.setItem('terminal_timezone', tz);
-                  }}
-                  className="w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 text-sm"
-                >
-                  <optgroup label="Common Timezones">
-                    <option value="UTC">UTC (Universal Time)</option>
-                    <option value="America/New_York">Eastern Time (New York)</option>
-                    <option value="America/Chicago">Central Time (Chicago)</option>
-                    <option value="America/Denver">Mountain Time (Denver)</option>
-                    <option value="America/Los_Angeles">Pacific Time (Los Angeles)</option>
-                    <option value="America/Toronto">Eastern Time (Toronto)</option>
-                    <option value="Europe/London">Greenwich Mean Time (London)</option>
-                    <option value="Europe/Paris">Central European Time (Paris)</option>
-                    <option value="Asia/Tokyo">Japan Standard Time (Tokyo)</option>
-                    <option value="Asia/Shanghai">China Standard Time (Shanghai)</option>
-                    <option value="Australia/Sydney">Australian Eastern Time (Sydney)</option>
-                  </optgroup>
-                  <optgroup label="System Default">
-                    <option value={Intl.DateTimeFormat().resolvedOptions().timeZone}>
-                      Detected: {Intl.DateTimeFormat().resolvedOptions().timeZone}
-                    </option>
-                  </optgroup>
-                </select>
-                <p className="text-[10px] text-green-900 italic">Affects timestamp conversion in generated reports.</p>
-              </div>
-
-              {/* 2. Import Users */}
-              <div className="space-y-2">
-                <label className="text-xs text-green-800 uppercase font-bold">User Management</label>
-                <div className="grid grid-cols-1 gap-2">
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-full flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all"
-                  >
-                    <Upload size={18} />
-                    IMPORT_USERS_VIA_CSV
-                  </button>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Settings className="text-green-400" size={20} />
+                  <h2 className={cn("font-bold text-white", fontSize === 'large' ? "text-xl" : "text-lg")}>SYSTEM_SETTINGS</h2>
                 </div>
-                <input 
-                  ref={fileInputRef}
-                  type="file" 
-                  accept=".csv" 
-                  className="hidden" 
-                  onChange={handleImportCSV}
-                />
-              </div>
-
-              {/* 3. Export Data */}
-              <div className="space-y-2">
-                <label className="text-xs text-green-800 uppercase font-bold">Data Export</label>
-                <div className="grid grid-cols-1 gap-2">
+                <div className="flex items-center bg-green-900/20 rounded p-1">
                   <button 
-                    onClick={handleExportToGoogleDrive}
-                    className="flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all text-xs"
+                    onClick={() => setSettingsTab('general')}
+                    className={cn(
+                      "px-3 py-1 text-[10px] font-bold rounded transition-colors",
+                      settingsTab === 'general' ? "bg-green-500 text-black" : "text-green-500 hover:bg-green-900/30"
+                    )}
                   >
-                    <Cloud size={16} />
-                    {isGDriveConnected ? 'EXPORT_TO_GOOGLE_DRIVE' : 'CONNECT_AND_EXPORT'}
+                    GENERAL
+                  </button>
+                  <button 
+                    onClick={() => setSettingsTab('api')}
+                    className={cn(
+                      "px-3 py-1 text-[10px] font-bold rounded transition-colors",
+                      settingsTab === 'api' ? "bg-green-500 text-black" : "text-green-500 hover:bg-green-900/30"
+                    )}
+                  >
+                    API_CONFIG
                   </button>
                 </div>
               </div>
-
-              {/* 3. Connect GDrive */}
-              <div className="space-y-2">
+              <div className="flex items-center gap-4">
                 <button 
-                  onClick={handleConnectGoogleDrive}
+                  onClick={() => setFontSize(prev => prev === 'normal' ? 'large' : 'normal')}
                   className={cn(
-                    "w-full flex items-center justify-center gap-2 py-3 border rounded transition-all text-xs font-bold",
-                    isGDriveConnected 
-                      ? "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40"
-                      : "bg-green-900/20 border-green-900 text-green-400 hover:bg-green-900/30"
+                    "bg-green-900/30 px-2 py-1 rounded text-green-400 hover:bg-green-900/50 transition-colors uppercase font-bold",
+                    fontSize === 'large' ? "text-xs" : "text-[10px]"
                   )}
                 >
-                  <Cloud size={18} />
-                  {isGDriveConnected ? 'GOOGLE_DRIVE_CONNECTED' : 'CONNECT_GOOGLE_DRIVE'}
+                  FONT_SIZE: {fontSize === 'normal' ? 'NORMAL' : 'LARGE'}
                 </button>
-                
-                {isGDriveConnected && (
-                  <button 
-                    onClick={handleDisconnectGoogleDrive}
-                    className="w-full flex items-center justify-center gap-2 py-3 bg-red-900/10 border border-red-900/50 hover:bg-red-900/30 text-red-500 rounded transition-all text-xs font-bold"
-                  >
-                    <CloudOff size={16} />
-                    DISCONNECT_GOOGLE_DRIVE
-                  </button>
-                )}
-
-                {!isGDriveConnected && (
-                  <div className="p-2 bg-blue-950/20 border border-blue-900/30 rounded">
-                    <p className="text-[9px] text-blue-400 uppercase font-bold mb-1">OAuth Redirect URI:</p>
-                    <code className="text-[9px] text-blue-300 break-all bg-black/50 p-1 block">
-                      {window.location.origin}/auth/callback
-                    </code>
-                    <p className="text-[8px] text-blue-800 mt-1 italic">Add this to your Google Cloud Console Authorized Redirect URIs.</p>
-                  </div>
-                )}
+                <button onClick={() => setShowSettings(false)} className="text-green-900 hover:text-green-400 transition-colors">
+                  <X size={24} />
+                </button>
               </div>
+            </div>
+
+            <div className={cn("space-y-4", fontSize === 'large' ? "text-base" : "text-sm")}>
+              {settingsTab === 'general' ? (
+                <>
+                  {/* 1. Timezone Settings */}
+                  <div className="space-y-2">
+                    <label className={cn("text-green-800 uppercase font-bold flex items-center gap-1", fontSize === 'large' ? "text-sm" : "text-xs")}>
+                      <Calendar size={12} /> System Timezone
+                    </label>
+                    <select 
+                      value={selectedTimezone}
+                      onChange={(e) => {
+                        const tz = e.target.value;
+                        setSelectedTimezone(tz);
+                        localStorage.setItem('terminal_timezone', tz);
+                      }}
+                      className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500", fontSize === 'large' ? "text-base" : "text-sm")}
+                    >
+                      <optgroup label="Common Timezones">
+                        <option value="UTC">UTC (Universal Time)</option>
+                        <option value="America/New_York">Eastern Time (New York)</option>
+                        <option value="America/Chicago">Central Time (Chicago)</option>
+                        <option value="America/Denver">Mountain Time (Denver)</option>
+                        <option value="America/Los_Angeles">Pacific Time (Los Angeles)</option>
+                        <option value="America/Toronto">Eastern Time (Toronto)</option>
+                        <option value="Europe/London">Greenwich Mean Time (London)</option>
+                        <option value="Europe/Paris">Central European Time (Paris)</option>
+                        <option value="Asia/Tokyo">Japan Standard Time (Tokyo)</option>
+                        <option value="Asia/Shanghai">China Standard Time (Shanghai)</option>
+                        <option value="Australia/Sydney">Australian Eastern Time (Sydney)</option>
+                      </optgroup>
+                      <optgroup label="System Default">
+                        <option value={Intl.DateTimeFormat().resolvedOptions().timeZone}>
+                          Detected: {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                        </option>
+                      </optgroup>
+                    </select>
+                    <p className={cn("text-green-800 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Affects timestamp conversion in generated reports.</p>
+                  </div>
+
+                  {/* 2. Import Users */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className={cn("text-green-800 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>User Management</label>
+                      <button 
+                        onClick={downloadCsvTemplate}
+                        className={cn("text-blue-500 hover:text-blue-400 font-bold transition-colors underline", fontSize === 'large' ? "text-xs" : "text-[10px]")}
+                      >
+                        DOWNLOAD_TEMPLATE_CSV
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
+                      <button 
+                        onClick={() => fileInputRef.current?.click()}
+                        className={cn("w-full flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all", fontSize === 'large' ? "text-sm" : "text-xs")}
+                      >
+                        <Upload size={18} />
+                        IMPORT_USERS_VIA_CSV
+                      </button>
+                      <p className={cn("text-green-800 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>FOB_ID or USER_ID must be numbers and must be an exact match</p>
+                    </div>
+                    <input 
+                      ref={fileInputRef}
+                      type="file" 
+                      accept=".csv" 
+                      className="hidden" 
+                      onChange={handleImportCSV}
+                    />
+                  </div>
+
+                  {/* 3. Export Data */}
+                  <div className="space-y-2">
+                    <label className={cn("text-green-800 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>Data Export</label>
+                    <div className="grid grid-cols-1 gap-2">
+                      <button 
+                        onClick={handleExportToGoogleDrive}
+                        className={cn("flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all", fontSize === 'large' ? "text-sm" : "text-xs")}
+                      >
+                        <Cloud size={16} />
+                        {isGDriveConnected ? 'EXPORT_TO_GOOGLE_DRIVE' : 'CONNECT_AND_EXPORT'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 3. Connect GDrive */}
+                  <div className="space-y-2">
+                    <button 
+                      onClick={handleConnectGoogleDrive}
+                      className={cn(
+                        "w-full flex items-center justify-center gap-2 py-3 border rounded transition-all font-bold",
+                        fontSize === 'large' ? "text-sm" : "text-xs",
+                        isGDriveConnected 
+                          ? "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40"
+                          : "bg-green-900/20 border-green-900 text-green-400 hover:bg-green-900/30"
+                      )}
+                    >
+                      <Cloud size={18} />
+                      {isGDriveConnected ? 'GOOGLE_DRIVE_CONNECTED' : 'CONNECT_GOOGLE_DRIVE'}
+                    </button>
+                    
+                    {isGDriveConnected && (
+                      <button 
+                        onClick={handleDisconnectGoogleDrive}
+                        className={cn("w-full flex items-center justify-center gap-2 py-3 bg-red-900/10 border border-red-900/50 hover:bg-red-900/30 text-red-500 rounded transition-all font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}
+                      >
+                        <CloudOff size={16} />
+                        DISCONNECT_GOOGLE_DRIVE
+                      </button>
+                    )}
+
+                    {!isGDriveConnected && (
+                      <div className="p-2 bg-blue-950/20 border border-blue-900/30 rounded">
+                        <p className={cn("text-blue-400 uppercase font-bold mb-1", fontSize === 'large' ? "text-[10px]" : "text-[9px]")}>OAuth Redirect URI:</p>
+                        <code className={cn("text-blue-300 break-all bg-black/50 p-1 block", fontSize === 'large' ? "text-[10px]" : "text-[9px]")}>
+                          {window.location.origin}/auth/callback
+                        </code>
+                        <p className={cn("text-blue-800 mt-1 italic", fontSize === 'large' ? "text-[9px]" : "text-[8px]")}>Add this to your Google Cloud Console Authorized Redirect URIs.</p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+                  <div className="p-3 bg-blue-950/20 border border-blue-900/50 rounded space-y-2">
+                    <p className="text-blue-400 text-[10px] font-bold uppercase">Standalone Executable Config</p>
+                    <p className="text-blue-300 text-[9px] leading-relaxed">
+                      Configure these settings to allow the application to use your own Google Cloud project. 
+                      This is required for standalone deployments.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className={cn("text-green-800 uppercase font-bold block", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client ID</label>
+                    <input 
+                      type="text"
+                      value={googleClientId}
+                      onChange={(e) => setGoogleClientId(e.target.value)}
+                      placeholder="Enter Client ID"
+                      className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 placeholder:text-green-900", fontSize === 'large' ? "text-base" : "text-sm")}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className={cn("text-green-800 uppercase font-bold block", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client Secret</label>
+                    <input 
+                      type="password"
+                      value={googleClientSecret}
+                      onChange={(e) => setGoogleClientSecret(e.target.value)}
+                      placeholder="Enter Client Secret"
+                      className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 placeholder:text-green-900", fontSize === 'large' ? "text-base" : "text-sm")}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className={cn("text-green-800 uppercase font-bold block", fontSize === 'large' ? "text-sm" : "text-xs")}>Standalone App URL</label>
+                    <input 
+                      type="text"
+                      value={appUrl}
+                      onChange={(e) => setAppUrl(e.target.value)}
+                      placeholder="e.g. http://localhost:3000"
+                      className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 placeholder:text-green-900", fontSize === 'large' ? "text-base" : "text-sm")}
+                    />
+                    <p className="text-[9px] text-green-800 italic">Used to calculate the OAuth Redirect URI.</p>
+                  </div>
+
+                  <button 
+                    onClick={handleSaveApiSettings}
+                    disabled={isSavingSettings}
+                    className={cn(
+                      "w-full flex items-center justify-center gap-2 py-3 border rounded transition-all font-bold disabled:opacity-50",
+                      showSaveConfirm ? "bg-red-600 border-red-500 text-white hover:bg-red-500" : "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40",
+                      fontSize === 'large' ? "text-sm" : "text-xs"
+                    )}
+                  >
+                    {isSavingSettings ? <Activity className="animate-spin" size={14} /> : (showSaveConfirm ? <AlertTriangle size={16} /> : <Save size={16} />)}
+                    {isSavingSettings ? 'SAVING_CONFIG...' : (showSaveConfirm ? 'CONFIRM_SAVE_NEW_SETTINGS' : 'SAVE_API_CONFIG')}
+                  </button>
+
+                  {showSaveConfirm && (
+                    <div className="p-2 border border-red-600 bg-red-950/20 rounded">
+                      <p className="text-red-500 text-[10px] font-bold text-center animate-pulse">
+                        ⚠️ WARNING: CHANGING THESE SETTINGS WILL RESTART THE GOOGLE OAUTH CLIENT. PRESS THE RED BUTTON ABOVE TO CONFIRM.
+                      </p>
+                      <button 
+                        onClick={() => setShowSaveConfirm(false)}
+                        className="w-full mt-2 text-[10px] text-gray-500 hover:text-gray-300 underline font-bold"
+                      >
+                        CANCEL
+                      </button>
+                    </div>
+                  )}
+
+                  <button 
+                    onClick={handleResetToDefaults}
+                    className={cn(
+                      "w-full flex items-center justify-center gap-2 py-3 bg-gray-900/20 border border-gray-800 hover:bg-gray-800/40 text-gray-500 rounded transition-all font-bold",
+                      fontSize === 'large' ? "text-sm" : "text-xs"
+                    )}
+                  >
+                    <RotateCcw size={16} />
+                    RESET_TO_DEFAULT_SETTINGS
+                  </button>
+
+                  <div className="p-2 border border-red-900/30 rounded bg-red-950/10">
+                    <p className="text-red-500 text-[9px] font-bold">WARNING: Changing these settings will restart the OAuth client. You may need to reconnect Google Drive after saving.</p>
+                  </div>
+                </div>
+              )}
 
               {/* 4. Bottom Buttons */}
               <div className="pt-4 border-t border-green-900 flex gap-2">
                 <button 
                   onClick={() => setShowSettings(false)}
-                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-green-900/20 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all text-xs font-bold"
+                  className={cn("flex-1 flex items-center justify-center gap-2 py-3 bg-green-900/20 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}
                 >
                   <Save size={16} />
                   SAVE_AND_EXIT
@@ -1104,13 +1492,13 @@ export default function App() {
                   <button 
                     disabled={!isGDriveConnected}
                     onClick={handleClearDatabase}
-                    className="w-full flex items-center justify-center gap-2 py-3 bg-red-900/20 border border-red-900 hover:bg-red-900/40 text-red-500 rounded transition-all text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed"
+                    className={cn("w-full flex items-center justify-center gap-2 py-3 bg-red-900/20 border border-red-900 hover:bg-red-900/40 text-red-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
                   >
                     <Trash2 size={16} />
                     CLEAR_DATABASE
                   </button>
                   {!isGDriveConnected && (
-                    <div className="absolute bottom-full left-0 mb-2 w-48 p-2 bg-red-950 border border-red-900 text-[10px] text-red-400 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                    <div className={cn("absolute bottom-full left-0 mb-2 w-48 p-2 bg-red-950 border border-red-900 text-red-400 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
                       SYSTEM_LOCKED: Google Drive must be connected for mandatory backup before clearing the database.
                     </div>
                   )}

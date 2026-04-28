@@ -5,11 +5,32 @@ import path from 'path';
 // import { google } from 'googleapis'; // Moved to dynamic import
 import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
+import fs from 'fs';
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
+const SETTINGS_FILE = path.join(process.cwd(), 'settings.json');
+
+// Load settings from file or environment
+function getSettings() {
+  let settings = {
+    googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+    googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+    appUrl: process.env.APP_URL || ''
+  };
+
+  if (fs.existsSync(SETTINGS_FILE)) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+      settings = { ...settings, ...saved };
+    } catch (e) {
+      console.error('[SETTINGS] Failed to parse settings.json:', e);
+    }
+  }
+  return settings;
+}
 
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
@@ -25,11 +46,12 @@ let oauth2Client: any = null;
 async function getOAuth2Client() {
   if (!oauth2Client) {
     const { google } = await import('googleapis');
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const settings = getSettings();
+    const clientId = settings.googleClientId;
+    const clientSecret = settings.googleClientSecret;
 
     if (!clientId || !clientSecret) {
-      console.warn('[AUTH] Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET. Google Drive features will fail.');
+      console.warn('[AUTH] Missing Google credentials in settings.json or environment. Google Drive features will fail.');
       return null;
     }
 
@@ -45,13 +67,20 @@ async function getOAuth2Client() {
 const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
 
 function getRedirectUri(req: express.Request) {
-  // Priority 1: Use APP_URL if set (common in AI Studio)
+  const settings = getSettings();
+  // Priority 1: Use settings APP_URL if set
+  if (settings.appUrl) {
+    const base = settings.appUrl.replace(/\/$/, '');
+    return `${base}/auth/callback`;
+  }
+
+  // Priority 2: Use environment APP_URL
   if (process.env.APP_URL) {
     const base = process.env.APP_URL.replace(/\/$/, '');
     return `${base}/auth/callback`;
   }
 
-  // Priority 2: Use headers
+  // Priority 3: Use headers
   const protocol = req.headers['x-forwarded-proto'] || 'http';
   const host = req.headers['host'];
   return `${protocol}://${host}/auth/callback`;
@@ -141,6 +170,51 @@ app.post('/api/auth/google/disconnect', (req, res) => {
   });
   console.log('[AUTH] Google Drive disconnected (cookie cleared)');
   res.json({ success: true });
+});
+
+// API: Get App Settings (Current)
+app.get('/api/settings', (req, res) => {
+  res.json(getSettings());
+});
+
+// API: Get Default Settings (from Environment Only)
+app.get('/api/settings/defaults', (req, res) => {
+  const defaults = {
+    googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+    googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+    appUrl: process.env.APP_URL || ''
+  };
+  res.json(defaults);
+});
+
+// API: Save App Settings
+app.post('/api/settings', (req, res) => {
+  try {
+    const newSettings = req.body;
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(newSettings, null, 2));
+    
+    // Invalidate oauth2Client so it picks up new settings next time
+    oauth2Client = null;
+    
+    console.log('[SETTINGS] Settings updated and saved to settings.json');
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[SETTINGS] Save error:', error);
+    res.status(500).json({ error: 'Failed to save settings' });
+  }
+});
+
+// API: Reset App Settings (Delete settings.json)
+app.post('/api/settings/reset', (req, res) => {
+  try {
+    if (fs.existsSync(SETTINGS_FILE)) {
+      fs.unlinkSync(SETTINGS_FILE);
+    }
+    oauth2Client = null;
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to reset settings' });
+  }
 });
 
 // API: Export to Drive
