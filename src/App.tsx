@@ -1225,7 +1225,7 @@ export default function App() {
       {showSettings && (
         <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
           <div className={cn(
-            "max-w-md w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)]",
+            "max-w-lg w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)]",
             fontSize === 'large' ? "scale-105" : ""
           )}>
             <div className="flex items-center justify-between border-b border-green-900 pb-4">

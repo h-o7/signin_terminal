@@ -1,44 +1,48 @@
-# Sign-in Terminal
+# Sign-in Terminal & User Management System
 
-This project is a terminal-based sign-in system that logs to Google Sheets.
+A retro-styled terminal system for user check-ins with real-time feedback, CSV user imports, and Google Drive backup integration.
+
+## Key Features
+- **Retro Terminal Interface**: High-contrast green-on-black UI with scanning sounds and animations.
+- **User Management**: Bulk import users via CSV (supports `fob_id`, `username`, `displayname`).
+- **Google Drive Integration**: One-click export of system logs to Google Drive as CSV files.
+- **Standalone Mode**: Configurable via UI to work without platform-specific environment variables.
+- **Accessibility**: Toggle between Normal and Large font sizes in settings.
+
+## Standalone Configuration (API_CONFIG)
+
+To use this application outside of the AI Studio environment (e.g., as a packaged executable), you must configure your own Google Cloud credentials:
+
+1.  **Access Settings**: Click the gear icon (SYSTEM_SETTINGS) in the bottom-right.
+2.  **Navigate to API_CONFIG**: Select the `API_CONFIG` tab at the top of the settings menu.
+3.  **Enter Credentials**:
+    - **Google Client ID**: Obtained from [Google Cloud Console](https://console.cloud.google.com/).
+    - **Google Client Secret**: Obtained from Google Cloud Console.
+    - **Standalone App URL**: The URL where your app is running (e.g., `http://localhost:3000`).
+4.  **Save Config**: Click `SAVE_API_CONFIG` and confirm when prompted.
+5.  **Restart**: These settings are saved to `settings.json` at the project root and will persist after application restarts.
+
+**Note**: You must add the `OAuth Redirect URI` shown in the settings menu to your Google Cloud Console's "Authorized redirect URIs" list.
 
 ## Local Development
 
-1.  Install dependencies:
+1.  **Install dependencies**:
     ```bash
     npm install
     ```
-2.  Start the development server:
+2.  **Start the development server**:
     ```bash
     npm run dev
     ```
 
-## Deployment to GitHub Pages
+## Setup Environment Variables
+If not using the UI for configuration, you can use `.env`:
+```env
+GOOGLE_CLIENT_ID="your_id"
+GOOGLE_CLIENT_SECRET="your_secret"
+APP_URL="http://localhost:3000"
+```
 
-1.  Ensure your `vite.config.ts` has the correct `base` path:
-    ```typescript
-    base: '/signin_terminal/',
-    ```
-2.  Run the deployment script:
-    ```bash
-    npm run deploy
-    ```
-3.  In your GitHub repository settings, go to **Pages** and set the branch to `gh-pages`.
-
-## Troubleshooting
-
-### Error: `spawn git ENOENT`
-If you see this error when running `npm run deploy`, it means **Git is not installed** on your computer or is not in your system's PATH.
-
-**To fix this:**
-1.  **Download and install Git:** [https://git-scm.com/downloads](https://git-scm.com/downloads)
-2.  **Restart your terminal/command prompt** after installation.
-3.  Try running `npm run deploy` again.
-
-### Alternative: Manual Deployment (No Git required)
-If you cannot install Git, you can deploy manually:
-1.  Run `npm run build`.
-2.  Open your GitHub repository in your browser.
-3.  Go to **Settings** > **Pages**.
-4.  Under **Build and deployment** > **Source**, select **GitHub Actions**.
-5.  Wait for the build to finish, or manually upload the contents of the `dist/` folder to a branch named `gh-pages`.
+## System Requirements
+- Node.js (v18+)
+- (For Executable) A tool like `pkg` or `nexe` can be used to wrap the server and frontend into a single `.exe`.
