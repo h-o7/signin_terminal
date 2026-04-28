@@ -23,10 +23,14 @@ function getSettings() {
 
   if (fs.existsSync(SETTINGS_FILE)) {
     try {
-      const saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
-      settings = { ...settings, ...saved };
+      const content = fs.readFileSync(SETTINGS_FILE, 'utf8');
+      if (content && content.trim()) {
+        const saved = JSON.parse(content);
+        settings = { ...settings, ...saved };
+      }
     } catch (e) {
       console.error('[SETTINGS] Failed to parse settings.json:', e);
+      // If the file is corrupted, we might want to delete it or just ignore it
     }
   }
   return settings;
@@ -68,22 +72,45 @@ const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
 
 function getRedirectUri(req: express.Request) {
   const settings = getSettings();
-  // Priority 1: Use settings APP_URL if set
-  if (settings.appUrl) {
-    const base = settings.appUrl.replace(/\/$/, '');
+  
+  // Log headers for debugging
+  console.log('[AUTH] Headers:', {
+    host: req.headers['host'],
+    'x-forwarded-host': req.headers['x-forwarded-host'],
+    'x-forwarded-proto': req.headers['x-forwarded-proto'],
+    origin: req.headers['origin']
+  });
+
+  // Priority 1: Use settings APP_URL if set and not empty
+  if (settings.appUrl && settings.appUrl.trim() !== '') {
+    const base = settings.appUrl.trim().replace(/\/$/, '');
+    console.log(`[AUTH] Using App URL from settings: ${base}`);
     return `${base}/auth/callback`;
   }
 
-  // Priority 2: Use environment APP_URL
+  // Priority 2: Use environment APP_URL if set
   if (process.env.APP_URL) {
     const base = process.env.APP_URL.replace(/\/$/, '');
+    console.log(`[AUTH] Using App URL from environment: ${base}`);
     return `${base}/auth/callback`;
   }
 
-  // Priority 3: Use headers
+  // Priority 3: Use request headers but filter out platform domain if it leaks
   const protocol = req.headers['x-forwarded-proto'] || 'http';
-  const host = req.headers['host'];
-  return `${protocol}://${host}/auth/callback`;
+  let host = req.headers['host'] || '';
+  
+  // If host is aistudio.google.com, we are likely in a proxied iframe state we don't want for OAuth
+  if (host.includes('aistudio.google.com')) {
+    console.warn(`[AUTH] Detected platform host (${host}) in headers. Attempting to recover real host...`);
+    const forwardedHost = req.headers['x-forwarded-host'] as string;
+    if (forwardedHost && !forwardedHost.includes('aistudio.google.com')) {
+      host = forwardedHost;
+    }
+  }
+
+  const generated = `${protocol}://${host}/auth/callback`;
+  console.log(`[AUTH] Generated redirect URI from headers: ${generated}`);
+  return generated;
 }
 
 // API: Get Auth URL
@@ -279,8 +306,8 @@ async function startServer() {
       
       app.use(express.static(distPath));
       
-      // Catch-all route for SPA - Compatible with Express 4/5
-      app.get('*all', (req, res) => {
+      // Catch-all route for SPA - Express 5 compatible wildcard
+      app.get('(.*)', (req, res) => {
         const indexPath = path.join(distPath, 'index.html');
         console.log(`[SERVER] Serving SPA for: ${req.url}`);
         res.sendFile(indexPath, (err) => {

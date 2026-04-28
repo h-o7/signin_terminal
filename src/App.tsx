@@ -72,7 +72,7 @@ export default function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const TERMINAL_ID = 'shared-terminal';
+  const terminalId = user?.uid || 'shared-terminal';
 
   // Auth Listener
   useEffect(() => {
@@ -80,6 +80,8 @@ export default function App() {
       setUser(u);
       if (u) {
         setIsStarted(true);
+      } else {
+        setIsStarted(false);
       }
       setIsAuthReady(true);
     });
@@ -108,13 +110,29 @@ export default function App() {
   useEffect(() => {
     if (showSettings) {
       fetch('/api/settings')
-        .then(res => res.json())
+        .then(async res => {
+          const contentType = res.headers.get("content-type");
+          if (contentType && contentType.indexOf("application/json") !== -1) {
+            return res.json();
+          }
+          const text = await res.text();
+          console.error('Invalid settings response format:', text.substring(0, 100));
+          throw new Error('SERVER_RESPONSE_NOT_JSON: The server returned an invalid format. This often happens if the server crashed and returned an HTML error page.');
+        })
         .then(data => {
           setGoogleClientId(data.googleClientId || '');
           setGoogleClientSecret(data.googleClientSecret || '');
           setAppUrl(data.appUrl || window.location.origin);
         })
-        .catch(err => console.error('Failed to load settings:', err));
+        .catch(err => {
+          console.error('Failed to load settings:', err);
+          setLogs(prev => [...prev, { 
+            id: Date.now().toString(), 
+            timestamp: new Date(), 
+            message: `SYSTEM_ERROR: Failed to load API settings. ${err.message}`, 
+            type: 'system' 
+          }]);
+        });
     }
   }, [showSettings]);
 
@@ -186,7 +204,7 @@ export default function App() {
   useEffect(() => {
     if (!isStarted || !isAuthReady) return;
 
-    const unsubscribeUsers = onSnapshot(collection(db, 'terminals', TERMINAL_ID, 'mappings'), (snapshot) => {
+    const unsubscribeUsers = onSnapshot(collection(db, 'terminals', terminalId, 'mappings'), (snapshot) => {
       const statuses: UserStatusMap = {};
       const users: UserRecord[] = [];
       snapshot.forEach((doc) => {
@@ -210,7 +228,7 @@ export default function App() {
     const startOfTodayISO = startOfToday.toISOString();
 
     const q = query(
-      collection(db, 'terminals', TERMINAL_ID, 'logs'), 
+      collection(db, 'terminals', terminalId, 'logs'), 
       where('timestamp', '>=', startOfTodayISO),
       orderBy('timestamp', 'desc'), 
       limit(50)
@@ -239,7 +257,7 @@ export default function App() {
       unsubscribeUsers();
       unsubscribeLogs();
     };
-  }, [isStarted, isAuthReady]);
+  }, [isStarted, isAuthReady, terminalId]);
 
   // Auto-scroll
   useEffect(() => {
@@ -266,7 +284,7 @@ export default function App() {
       }
 
       try {
-        await setDoc(doc(db, 'terminals', TERMINAL_ID, 'mappings', userInput), {
+        await setDoc(doc(db, 'terminals', terminalId, 'mappings', userInput), {
           username: userInput,
           lastStatus: nextStatus,
           lastTimestamp: formattedTime,
@@ -276,7 +294,7 @@ export default function App() {
           ...(displayName ? { displayName } : {})
         }, { merge: true });
 
-        await addDoc(collection(db, 'terminals', TERMINAL_ID, 'logs'), {
+        await addDoc(collection(db, 'terminals', terminalId, 'logs'), {
           username: userInput,
           displayName: displayName,
           status: nextStatus,
@@ -324,7 +342,7 @@ export default function App() {
             if (username) {
               const cleanedUsername = String(username).trim();
               if (cleanedUsername) {
-                const userRef = doc(db, 'terminals', TERMINAL_ID, 'mappings', cleanedUsername);
+                const userRef = doc(db, 'terminals', terminalId, 'mappings', cleanedUsername);
                 batch.set(userRef, {
                   username: cleanedUsername,
                   lastStatus: row.lastStatus || 'logged out',
@@ -362,7 +380,7 @@ export default function App() {
   const handleExportCSV = async () => {
     try {
       setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Fetching all logs for export...', type: 'system' }]);
-      const snapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'logs'));
+      const snapshot = await getDocs(collection(db, 'terminals', terminalId, 'logs'));
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
       if (data.length === 0) {
@@ -399,7 +417,7 @@ export default function App() {
     setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Starting Google Drive backup before clear...', type: 'system' }]);
 
     try {
-      const snapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'logs'));
+      const snapshot = await getDocs(collection(db, 'terminals', terminalId, 'logs'));
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
       if (data.length === 0) {
@@ -456,8 +474,8 @@ export default function App() {
 
     // 2. Clear Database
     try {
-      const logsSnapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'logs'));
-      const mappingsSnapshot = await getDocs(collection(db, 'terminals', TERMINAL_ID, 'mappings'));
+      const logsSnapshot = await getDocs(collection(db, 'terminals', terminalId, 'logs'));
+      const mappingsSnapshot = await getDocs(collection(db, 'terminals', terminalId, 'mappings'));
       
       const batch = writeBatch(db);
       logsSnapshot.docs.forEach(d => batch.delete(d.ref));
@@ -479,7 +497,7 @@ export default function App() {
       let count = 0;
       
       Object.entries(editedUsers).forEach(([username, displayName]) => {
-        const userRef = doc(db, 'terminals', TERMINAL_ID, 'mappings', username);
+        const userRef = doc(db, 'terminals', terminalId, 'mappings', username);
         batch.update(userRef, { displayName });
         count++;
       });
@@ -567,7 +585,7 @@ export default function App() {
       }]);
 
       const q = query(
-        collection(db, 'terminals', TERMINAL_ID, 'logs'),
+        collection(db, 'terminals', terminalId, 'logs'),
         where('timestamp', '>=', startISO),
         where('timestamp', '<=', endISO),
         orderBy('timestamp', 'asc')
@@ -728,7 +746,7 @@ export default function App() {
       const endISO = getUtcBound(reportEndDate, '23:59:59.999');
 
       const q = query(
-        collection(db, 'terminals', TERMINAL_ID, 'logs'),
+        collection(db, 'terminals', terminalId, 'logs'),
         where('timestamp', '>=', startISO),
         where('timestamp', '<=', endISO),
         orderBy('timestamp', 'asc')
@@ -848,6 +866,12 @@ export default function App() {
 
   const handleConnectGoogleDrive = async () => {
     try {
+      // Check if we are in an iframe
+      const isInIframe = window.self !== window.top;
+      if (isInIframe) {
+        setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Detected iframe environment. If authentication fails, please open the application in a new tab using the "Shared App URL" or "Development App URL".', type: 'system' }]);
+      }
+
       const res = await fetch('/api/auth/google/url');
       const contentType = res.headers.get("content-type");
       
@@ -856,7 +880,13 @@ export default function App() {
       }
 
       const { url } = await res.json();
-      window.open(url, 'gdrive_auth', 'width=600,height=700');
+      
+      // Attempt to open in a popup
+      const popup = window.open(url, 'gdrive_auth', 'width=600,height=700');
+      
+      if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+        alert('POPUP_BLOCKED: Your browser blocked the authentication window. Please enable popups or click again.');
+      }
     } catch (err: any) {
       console.error('Failed to get auth URL:', err);
       alert(err.message || 'Failed to initialize Google Drive connection.');
@@ -908,51 +938,60 @@ export default function App() {
 
   if (!isStarted) {
     return (
-      <div className="min-h-screen bg-black text-green-500 font-mono flex flex-col items-center justify-center p-4 relative overflow-hidden">
+      <div className={cn(
+        "min-h-screen bg-black text-green-500 font-mono flex flex-col items-center justify-center p-4 relative overflow-hidden transition-all duration-300",
+        fontSize === 'large' ? "text-lg" : "text-base"
+      )}>
         {/* Background Grid Effect */}
         <div className="absolute inset-0 opacity-10 pointer-events-none" 
              style={{ backgroundImage: 'linear-gradient(#10b981 1px, transparent 1px), linear-gradient(90deg, #10b981 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
         
-        <div className="max-w-2xl w-full space-y-8 relative z-10 text-center">
+        <div className={cn(
+          "max-w-2xl w-full space-y-8 relative z-10 text-center transition-transform",
+          fontSize === 'large' ? "scale-110" : ""
+        )}>
           <div className="flex justify-center mb-6">
             <div className="p-4 rounded-full bg-green-900/20 border border-green-500/30 animate-pulse">
-              <TerminalIcon size={64} className="text-green-400" />
+              <TerminalIcon size={fontSize === 'large' ? 80 : 64} className="text-green-400" />
             </div>
           </div>
           
           <div className="space-y-2">
-            <h1 className="text-4xl font-black tracking-tighter text-white">TERMINAL_LOGGER_V2</h1>
-            <p className="text-green-800 text-sm uppercase tracking-widest">Secure Entry Management System</p>
+            <h1 className={cn("font-black tracking-tighter text-white", fontSize === 'large' ? "text-6xl" : "text-4xl")}>TERMINAL_LOGGER_V2</h1>
+            <p className={cn("text-green-400 uppercase tracking-widest", fontSize === 'large' ? "text-base" : "text-sm")}>Secure Entry Management System</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
             <div className="p-4 border border-green-900/50 bg-green-950/20 rounded-lg">
-              <Shield className="mb-2 text-green-400" size={20} />
-              <h3 className="text-xs font-bold text-white mb-1">ENCRYPTED</h3>
-              <p className="text-[10px] text-green-700">AES-256 secure data transmission protocols enabled.</p>
+              <Shield className="mb-2 text-green-400" size={fontSize === 'large' ? 24 : 20} />
+              <h3 className={cn("font-bold text-white mb-1", fontSize === 'large' ? "text-sm" : "text-xs")}>ENCRYPTED</h3>
+              <p className={cn("text-green-400", fontSize === 'large' ? "text-xs" : "text-[10px]")}>AES-256 secure data transmission protocols enabled.</p>
             </div>
             <div className="p-4 border border-green-900/50 bg-green-950/20 rounded-lg">
-              <Activity className="mb-2 text-green-400" size={20} />
-              <h3 className="text-xs font-bold text-white mb-1">REAL-TIME</h3>
-              <p className="text-[10px] text-green-700">Instant synchronization across all connected nodes.</p>
+              <Activity className="mb-2 text-green-400" size={fontSize === 'large' ? 24 : 20} />
+              <h3 className={cn("font-bold text-white mb-1", fontSize === 'large' ? "text-sm" : "text-xs")}>REAL-TIME</h3>
+              <p className={cn("text-green-400", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Instant synchronization across all connected nodes.</p>
             </div>
             <div className="p-4 border border-green-900/50 bg-green-950/20 rounded-lg">
-              <Database className="mb-2 text-green-400" size={20} />
-              <h3 className="text-xs font-bold text-white mb-1">PERSISTENT</h3>
-              <p className="text-[10px] text-green-700">Cloud-native storage with automated backup systems.</p>
+              <Database className="mb-2 text-green-400" size={fontSize === 'large' ? 24 : 20} />
+              <h3 className={cn("font-bold text-white mb-1", fontSize === 'large' ? "text-sm" : "text-xs")}>PERSISTENT</h3>
+              <p className={cn("text-green-400", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Cloud-native storage with automated backup systems.</p>
             </div>
           </div>
 
           <div className="pt-8 flex flex-col items-center gap-4">
             <button 
               onClick={() => setIsStarted(true)}
-              className="group relative px-12 py-4 bg-green-500 text-black font-bold text-lg hover:bg-green-400 transition-all active:scale-95 overflow-hidden rounded"
+              className={cn(
+                "group relative px-12 py-4 bg-green-500 text-black font-bold hover:bg-green-400 transition-all active:scale-95 overflow-hidden rounded",
+                fontSize === 'large' ? "text-xl px-16 py-6" : "text-lg"
+              )}
             >
               <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500" />
               LOGIN_TO_TERMINAL
             </button>
             
-            <div className="flex items-center gap-4 text-[10px] text-green-900">
+            <div className="flex items-center gap-4 text-[10px] text-green-400">
               <div className="flex items-center gap-1"><Cpu size={12}/> CPU_READY</div>
               <div className="flex items-center gap-1"><Shield size={12}/> AUTH_BYPASS_ENABLED</div>
             </div>
@@ -963,45 +1002,51 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-green-500 font-mono flex flex-col p-4 relative">
+    <div className={cn(
+      "min-h-screen bg-black text-green-500 font-mono flex flex-col p-4 relative transition-all duration-300",
+      fontSize === 'large' ? "text-lg" : "text-base"
+    )}>
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-green-900 pb-2 mb-4">
+      <div className={cn(
+        "flex items-center justify-between border-b border-green-900 pb-2 mb-4 transition-all",
+        fontSize === 'large' ? "scale-105 origin-left" : ""
+      )}>
         <div className="flex items-center gap-2">
           <TerminalIcon size={20} />
-          <span className="font-bold tracking-wider">CMD_TERMINAL_V2.0</span>
+          <span className="font-bold tracking-wider">CMD_TERMINAL_V2.1</span>
           <span className="text-[10px] bg-green-900/30 px-2 py-0.5 rounded text-green-400 animate-pulse">LIVE</span>
         </div>
         <div className="flex items-center gap-3">
           {user ? (
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-green-800">{user.email}</span>
+              <span className={cn("text-green-400", fontSize === 'large' ? "text-xs" : "text-[10px]")}>{user.email}</span>
               <button 
                 onClick={() => setShowUserList(true)} 
                 className="p-1 hover:bg-green-900/30 rounded text-green-400"
                 title="Registered Users"
               >
-                <Users size={18} />
+                <Users size={fontSize === 'large' ? 22 : 18} />
               </button>
               <button 
                 onClick={() => setShowReports(true)} 
                 className="p-1 hover:bg-green-900/30 rounded text-green-400"
                 title="Generate Reports"
               >
-                <FileSpreadsheet size={18} />
+                <FileSpreadsheet size={fontSize === 'large' ? 22 : 18} />
               </button>
               <button 
                 onClick={() => setShowSettings(true)} 
                 className="p-1 hover:bg-green-900/30 rounded text-green-400"
                 title="Settings"
               >
-                <Settings size={18} />
+                <Settings size={fontSize === 'large' ? 22 : 18} />
               </button>
-              <button onClick={signOut} className="text-[10px] border border-red-900 px-2 py-1 hover:bg-red-900/20 text-red-700 rounded">LOGOUT</button>
+              <button onClick={signOut} className={cn("border border-red-900 px-2 py-1 hover:bg-red-900/20 text-red-700 rounded font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}>LOGOUT</button>
             </div>
           ) : (
-            <button onClick={signIn} className="text-[10px] bg-green-900/40 px-3 py-1 text-green-400 hover:bg-green-400 hover:text-black transition-colors rounded">ADMIN_LOGIN</button>
+            <button onClick={signIn} className={cn("bg-green-900/40 px-3 py-1 text-green-400 hover:bg-green-400 hover:text-black transition-colors rounded font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}>ADMIN_LOGIN</button>
           )}
-          <button onClick={() => setIsStarted(false)} className="text-[10px] border border-green-900 px-2 py-1 hover:bg-green-900/20 rounded">EXIT</button>
+          <button onClick={() => setIsStarted(false)} className={cn("border border-green-900 px-2 py-1 hover:bg-green-900/20 rounded font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}>EXIT</button>
         </div>
       </div>
 
@@ -1012,8 +1057,11 @@ export default function App() {
         onClick={() => inputRef.current?.focus()}
       >
         {logs.map((log) => (
-          <div key={log.id} className="flex gap-3 text-sm animate-in fade-in slide-in-from-left-2 duration-300">
-            <span className="text-green-900 shrink-0">[{format(log.timestamp, 'yyyy-MM-dd HH:mm:ss')}]</span>
+          <div key={log.id} className={cn(
+            "flex gap-3 animate-in fade-in slide-in-from-left-2 duration-300",
+            fontSize === 'large' ? "text-base" : "text-sm"
+          )}>
+            <span className="text-green-400 shrink-0">[{format(log.timestamp, 'yyyy-MM-dd HH:mm:ss')}]</span>
             <span className={cn(
               "break-all",
               log.type === 'system' ? 'text-blue-400 italic' : 
@@ -1026,8 +1074,11 @@ export default function App() {
       </div>
 
       {/* Input Area */}
-      <div className="flex items-center gap-2 border-t border-green-900 pt-4">
-        <span className="text-green-400 font-bold shrink-0">SCAN_FOB_ID:</span>
+      <div className={cn(
+        "flex items-center gap-2 border-t border-green-900 pt-4",
+        fontSize === 'large' ? "scale-105 origin-left" : ""
+      )}>
+        <span className={cn("text-green-400 font-bold shrink-0", fontSize === 'large' ? "text-lg" : "text-base")}>SCAN_FOB_ID:</span>
         <input
           ref={inputRef}
           autoFocus
@@ -1035,7 +1086,10 @@ export default function App() {
           value={input}
           onChange={(e) => setInput(e.target.value.replace(/\D/g, '').slice(0, 12))}
           onKeyDown={handleKeyDown}
-          className="flex-1 bg-transparent border-none outline-none text-green-400 placeholder:text-green-900"
+          className={cn(
+            "flex-1 bg-transparent border-none outline-none text-green-400 placeholder:text-green-900",
+            fontSize === 'large' ? "text-lg" : "text-base"
+          )}
           placeholder="WAITING_FOR_SIGNAL..."
         />
       </div>
@@ -1043,25 +1097,31 @@ export default function App() {
       {/* User List Modal */}
       {showUserList && (
         <div className="absolute inset-0 bg-black/90 z-[60] flex items-center justify-center p-4">
-          <div className="max-w-xl w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)] flex flex-col max-h-[90vh]">
+          <div className={cn(
+            "max-w-xl w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)] flex flex-col max-h-[90vh]",
+            fontSize === 'large' ? "max-w-2xl scale-105" : ""
+          )}>
             <div className="flex items-center justify-between border-b border-green-900 pb-4 shrink-0">
               <div className="flex items-center gap-2">
-                <Users className="text-green-400" size={20} />
-                <h2 className="text-lg font-bold text-white">REGISTERED_USERS_DATABASE</h2>
+                <Users className="text-green-400" size={fontSize === 'large' ? 24 : 20} />
+                <h2 className={cn("font-bold text-white", fontSize === 'large' ? "text-xl" : "text-lg")}>REGISTERED_USERS_DATABASE</h2>
               </div>
-              <button onClick={() => { setShowUserList(false); setEditedUsers({}); }} className="text-green-900 hover:text-green-400 transition-colors">
-                <X size={24} />
+              <button onClick={() => { setShowUserList(false); setEditedUsers({}); }} className="text-green-400 hover:text-green-500 transition-colors">
+                <X size={fontSize === 'large' ? 32 : 24} />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-              <div className="grid grid-cols-2 text-[10px] text-green-800 font-bold uppercase border-b border-green-900/50 pb-2 mb-2">
+              <div className={cn(
+                "grid grid-cols-2 text-green-400 font-bold uppercase border-b border-green-900/50 pb-2 mb-2",
+                fontSize === 'large' ? "text-sm" : "text-[10px]"
+              )}>
                 <div>FOB_ID / USERNAME</div>
                 <div>DISPLAY_NAME (EDITABLE)</div>
               </div>
               
               {availableUsers.length === 0 ? (
-                <div className="text-center py-8 text-green-900 italic text-sm">NO_USERS_FOUND_IN_DATABASE</div>
+                <div className={cn("text-center py-8 text-green-400 italic", fontSize === 'large' ? "text-base" : "text-sm")}>NO_USERS_FOUND_IN_DATABASE</div>
               ) : (
                 [...availableUsers].sort((a, b) => {
                   const nameA = (a.displayName || a.username).toLowerCase();
@@ -1071,7 +1131,7 @@ export default function App() {
                   const currentDisplayName = editedUsers[u.username] !== undefined ? editedUsers[u.username] : (u.displayName || '');
                   return (
                     <div key={u.username} className="grid grid-cols-2 items-center py-2 border-b border-green-950 hover:bg-green-950/20 transition-colors group">
-                      <div className="text-green-400 text-sm font-bold flex items-center gap-2">
+                      <div className={cn("text-green-400 font-bold flex items-center gap-2", fontSize === 'large' ? "text-base" : "text-sm")}>
                         <div className="w-1.5 h-1.5 rounded-full bg-green-500/50 group-hover:animate-ping" />
                         {u.username}
                       </div>
@@ -1080,19 +1140,22 @@ export default function App() {
                           type="text"
                           value={currentDisplayName}
                           onChange={(e) => setEditedUsers(prev => ({ ...prev, [u.username]: e.target.value }))}
-                          className="flex-1 bg-black border border-green-900/50 p-1 text-green-600 text-sm focus:border-green-400 outline-none rounded"
+                          className={cn(
+                            "flex-1 bg-black border border-green-900/50 p-1 text-green-600 focus:border-green-400 outline-none rounded",
+                            fontSize === 'large' ? "text-base" : "text-sm"
+                          )}
                           placeholder="ENTER_DISPLAY_NAME..."
                         />
                         <button 
                           onClick={async () => {
-                            if (confirm(`DELETE USER ${u.username}?`)) {
-                              await deleteDoc(doc(db, 'terminals', TERMINAL_ID, 'mappings', u.username));
+                            if (confirm(`DELETE_USER ${u.username}?`)) {
+                              await deleteDoc(doc(db, 'terminals', terminalId, 'mappings', u.username));
                             }
                           }}
                           className="text-red-900 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all p-1"
                           title="Delete User"
                         >
-                          <Trash2 size={14} />
+                          <Trash2 size={fontSize === 'large' ? 18 : 14} />
                         </button>
                       </div>
                     </div>
@@ -1105,14 +1168,20 @@ export default function App() {
               <button 
                 onClick={handleSaveUserList}
                 disabled={isSavingUserList}
-                className="flex-1 flex items-center justify-center gap-2 py-3 bg-green-500 hover:bg-green-400 text-black rounded transition-all text-xs font-bold disabled:opacity-50"
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-2 py-3 bg-green-500 hover:bg-green-400 text-black rounded transition-all font-bold disabled:opacity-50",
+                  fontSize === 'large' ? "text-sm" : "text-xs"
+                )}
               >
-                {isSavingUserList ? <Activity className="animate-spin" size={16} /> : <Save size={16} />}
+                {isSavingUserList ? <Activity className="animate-spin" size={fontSize === 'large' ? 20 : 16} /> : <Save size={fontSize === 'large' ? 20 : 16} />}
                 SAVE_AND_EXIT
               </button>
               <button 
                 onClick={() => { setShowUserList(false); setEditedUsers({}); }}
-                className="flex-1 py-3 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all text-xs font-bold"
+                className={cn(
+                  "flex-1 py-3 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all font-bold",
+                  fontSize === 'large' ? "text-sm" : "text-xs"
+                )}
               >
                 CANCEL
               </button>
@@ -1124,26 +1193,32 @@ export default function App() {
       {/* Reports Modal */}
       {showReports && (
         <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
-          <div className="max-w-md w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)]">
+          <div className={cn(
+            "max-w-md w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)]",
+            fontSize === 'large' ? "max-w-xl scale-105" : ""
+          )}>
             <div className="flex items-center justify-between border-b border-green-900 pb-4">
               <div className="flex items-center gap-2">
-                <FileSpreadsheet className="text-green-400" size={20} />
-                <h2 className="text-lg font-bold text-white">GENERATE_REPORT</h2>
+                <FileSpreadsheet className="text-green-400" size={fontSize === 'large' ? 24 : 20} />
+                <h2 className={cn("font-bold text-white", fontSize === 'large' ? "text-xl" : "text-lg")}>GENERATE_REPORT</h2>
               </div>
-              <button onClick={() => setShowReports(false)} className="text-green-900 hover:text-green-400 transition-colors">
-                <X size={24} />
+              <button onClick={() => setShowReports(false)} className="text-green-400 hover:text-green-500 transition-colors">
+                <X size={fontSize === 'large' ? 32 : 24} />
               </button>
             </div>
 
             <div className="space-y-4">
               <div className="space-y-2">
-                <label className="text-xs text-green-800 uppercase font-bold flex items-center gap-1">
+                <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1", fontSize === 'large' ? "text-sm" : "text-xs")}>
                   <UserIcon size={12} /> Target User
                 </label>
                 <select 
                   value={reportUser}
                   onChange={(e) => setReportUser(e.target.value)}
-                  className="w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 text-sm"
+                  className={cn(
+                    "w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500",
+                    fontSize === 'large' ? "text-base" : "text-sm"
+                  )}
                 >
                   <option value="all">ALL_USERS</option>
                   {[...availableUsers].sort((a, b) => {
@@ -1160,58 +1235,75 @@ export default function App() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs text-green-800 uppercase font-bold flex items-center gap-1">
+                  <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1", fontSize === 'large' ? "text-sm" : "text-xs")}>
                     <Calendar size={12} /> Start Date
                   </label>
                   <input 
                     type="date"
                     value={reportStartDate}
                     onChange={(e) => setReportStartDate(e.target.value)}
-                    className="w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 text-sm [color-scheme:dark]"
+                    className={cn(
+                      "w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 [color-scheme:dark]",
+                      fontSize === 'large' ? "text-base" : "text-sm"
+                    )}
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs text-green-800 uppercase font-bold flex items-center gap-1">
+                  <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1", fontSize === 'large' ? "text-sm" : "text-xs")}>
                     <Calendar size={12} /> End Date
                   </label>
                   <input 
                     type="date"
                     value={reportEndDate}
                     onChange={(e) => setReportEndDate(e.target.value)}
-                    className="w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 text-sm [color-scheme:dark]"
+                    className={cn(
+                      "w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 [color-scheme:dark]",
+                      fontSize === 'large' ? "text-base" : "text-sm"
+                    )}
                   />
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-green-900 flex gap-2">
-                <button 
-                  onClick={handleGenerateReport}
-                  disabled={isGeneratingReport}
-                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-green-500 hover:bg-green-400 text-black rounded transition-all text-sm font-bold disabled:opacity-50"
-                >
-                  {isGeneratingReport ? (
-                    <Activity className="animate-spin" size={18} />
-                  ) : (
-                    <Search size={18} />
-                  )}
-                  EXPORT_SELECTED_USER
-                </button>
-                <button 
-                  onClick={handleExportAllAsZip}
-                  disabled={isExportingAll || isGeneratingReport}
-                  className="flex-1 flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded transition-all text-xs font-bold disabled:opacity-50"
-                  title="Export all users to individual CSVs in a ZIP"
-                >
-                  {isExportingAll ? (
-                    <Activity className="animate-spin" size={16} />
-                  ) : (
-                    <Download size={16} />
-                  )}
-                  EXPORT_ALL_TO_ZIP
-                </button>
+              <div className="pt-4 border-t border-green-900 space-y-2">
+                <div className="flex gap-2">
+                  <button 
+                    onClick={handleGenerateReport}
+                    disabled={isGeneratingReport}
+                    className={cn(
+                      "flex-1 flex items-center justify-center gap-2 py-3 bg-green-500 hover:bg-green-400 text-black rounded transition-all font-bold disabled:opacity-50",
+                      fontSize === 'large' ? "text-lg px-2" : "text-sm"
+                    )}
+                  >
+                    {isGeneratingReport ? (
+                      <Activity className="animate-spin" size={fontSize === 'large' ? 22 : 18} />
+                    ) : (
+                      <Search size={fontSize === 'large' ? 22 : 18} />
+                    )}
+                    EXPORT_SELECTED_USER_DATA
+                  </button>
+                  <button 
+                    onClick={handleExportAllAsZip}
+                    disabled={isExportingAll || isGeneratingReport}
+                    className={cn(
+                      "flex-1 flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded transition-all font-bold disabled:opacity-50",
+                      fontSize === 'large' ? "text-sm" : "text-xs"
+                    )}
+                    title="Export all users to individual CSVs in a ZIP"
+                  >
+                    {isExportingAll ? (
+                      <Activity className="animate-spin" size={fontSize === 'large' ? 20 : 16} />
+                    ) : (
+                      <Download size={fontSize === 'large' ? 20 : 16} />
+                    )}
+                    EXPORT_ALL_TO_ZIP
+                  </button>
+                </div>
                 <button 
                   onClick={() => setShowReports(false)}
-                  className="px-4 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all text-xs font-bold"
+                  className={cn(
+                    "w-full py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all font-bold",
+                    fontSize === 'large' ? "text-sm" : "text-xs"
+                  )}
                 >
                   CANCEL
                 </button>
@@ -1265,7 +1357,7 @@ export default function App() {
                 >
                   FONT_SIZE: {fontSize === 'normal' ? 'NORMAL' : 'LARGE'}
                 </button>
-                <button onClick={() => setShowSettings(false)} className="text-green-900 hover:text-green-400 transition-colors">
+                <button onClick={() => setShowSettings(false)} className="text-green-400 hover:text-green-500 transition-colors">
                   <X size={24} />
                 </button>
               </div>
@@ -1276,7 +1368,7 @@ export default function App() {
                 <>
                   {/* 1. Timezone Settings */}
                   <div className="space-y-2">
-                    <label className={cn("text-green-800 uppercase font-bold flex items-center gap-1", fontSize === 'large' ? "text-sm" : "text-xs")}>
+                    <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1", fontSize === 'large' ? "text-sm" : "text-xs")}>
                       <Calendar size={12} /> System Timezone
                     </label>
                     <select 
@@ -1307,13 +1399,13 @@ export default function App() {
                         </option>
                       </optgroup>
                     </select>
-                    <p className={cn("text-green-800 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Affects timestamp conversion in generated reports.</p>
+                    <p className={cn("text-green-400 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Affects timestamp conversion in generated reports.</p>
                   </div>
 
                   {/* 2. Import Users */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <label className={cn("text-green-800 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>User Management</label>
+                      <label className={cn("text-green-400 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>User Management</label>
                       <button 
                         onClick={downloadCsvTemplate}
                         className={cn("text-blue-500 hover:text-blue-400 font-bold transition-colors underline", fontSize === 'large' ? "text-xs" : "text-[10px]")}
@@ -1329,7 +1421,7 @@ export default function App() {
                         <Upload size={18} />
                         IMPORT_USERS_VIA_CSV
                       </button>
-                      <p className={cn("text-green-800 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>FOB_ID or USER_ID must be numbers and must be an exact match</p>
+                      <p className={cn("text-green-400 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>FOB_ID or USER_ID must be numbers and must be an exact match</p>
                     </div>
                     <input 
                       ref={fileInputRef}
@@ -1341,34 +1433,21 @@ export default function App() {
                   </div>
 
                   {/* 3. Export Data */}
-                  <div className="space-y-2">
-                    <label className={cn("text-green-800 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>Data Export</label>
-                    <div className="grid grid-cols-1 gap-2">
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className={cn("text-green-400 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>Data Management</label>
                       <button 
                         onClick={handleExportToGoogleDrive}
-                        className={cn("flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all", fontSize === 'large' ? "text-sm" : "text-xs")}
+                        className={cn(
+                          "w-full flex items-center justify-center gap-2 py-3 border rounded transition-all font-bold",
+                          fontSize === 'large' ? "text-sm" : "text-xs",
+                          "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40"
+                        )}
                       >
-                        <Cloud size={16} />
-                        {isGDriveConnected ? 'EXPORT_TO_GOOGLE_DRIVE' : 'CONNECT_AND_EXPORT'}
+                        <Cloud size={18} />
+                        {isGDriveConnected ? 'EXPORT_TO_CONNECTED_GOOGLE_DRIVE' : 'CONNECT_GOOGLE_DRIVE_AND_EXPORT_CSV'}
                       </button>
                     </div>
-                  </div>
-
-                  {/* 3. Connect GDrive */}
-                  <div className="space-y-2">
-                    <button 
-                      onClick={handleConnectGoogleDrive}
-                      className={cn(
-                        "w-full flex items-center justify-center gap-2 py-3 border rounded transition-all font-bold",
-                        fontSize === 'large' ? "text-sm" : "text-xs",
-                        isGDriveConnected 
-                          ? "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40"
-                          : "bg-green-900/20 border-green-900 text-green-400 hover:bg-green-900/30"
-                      )}
-                    >
-                      <Cloud size={18} />
-                      {isGDriveConnected ? 'GOOGLE_DRIVE_CONNECTED' : 'CONNECT_GOOGLE_DRIVE'}
-                    </button>
                     
                     {isGDriveConnected && (
                       <button 
@@ -1381,12 +1460,24 @@ export default function App() {
                     )}
 
                     {!isGDriveConnected && (
-                      <div className="p-2 bg-blue-950/20 border border-blue-900/30 rounded">
-                        <p className={cn("text-blue-400 uppercase font-bold mb-1", fontSize === 'large' ? "text-[10px]" : "text-[9px]")}>OAuth Redirect URI:</p>
-                        <code className={cn("text-blue-300 break-all bg-black/50 p-1 block", fontSize === 'large' ? "text-[10px]" : "text-[9px]")}>
-                          {window.location.origin}/auth/callback
-                        </code>
-                        <p className={cn("text-blue-800 mt-1 italic", fontSize === 'large' ? "text-[9px]" : "text-[8px]")}>Add this to your Google Cloud Console Authorized Redirect URIs.</p>
+                      <div className="p-2 bg-blue-950/20 border border-blue-900/30 rounded space-y-2">
+                        <div>
+                          <p className={cn("text-blue-400 uppercase font-bold mb-1", fontSize === 'large' ? "text-[10px]" : "text-[9px]")}>OAuth Redirect URI:</p>
+                          <code className={cn("text-blue-300 break-all bg-black/50 p-1 block", fontSize === 'large' ? "text-[10px]" : "text-[9px]")}>
+                            {appUrl ? `${appUrl.replace(/\/$/, '')}/auth/callback` : `${window.location.origin}/auth/callback`}
+                          </code>
+                        </div>
+                        
+                        <div className="p-2 border border-red-900/50 bg-red-950/20 rounded">
+                          <p className={cn("text-red-400 font-bold uppercase mb-1 flex items-center gap-1", fontSize === 'large' ? "text-[10px]" : "text-[9px]")}>
+                            <AlertTriangle size={10} /> Troubleshooting:
+                          </p>
+                          <p className={cn("text-red-300 leading-tight italic", fontSize === 'large' ? "text-[9px]" : "text-[8px]")}>
+                            If you encounter 404 errors during authentication, ensure your "Standalone App URL" in API_CONFIG matches exactly where you are running the app, or open the application in a new tab.
+                          </p>
+                        </div>
+                        
+                        <p className={cn("text-blue-800 mt-1 italic", fontSize === 'large' ? "text-[9px]" : "text-[8px]")}>Add the Redirect URI to your Google Cloud Console Authorized Redirect URIs.</p>
                       </div>
                     )}
                   </div>
@@ -1395,44 +1486,44 @@ export default function App() {
                 <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
                   <div className="p-3 bg-blue-950/20 border border-blue-900/50 rounded space-y-2">
                     <p className="text-blue-400 text-[10px] font-bold uppercase">Standalone Executable Config</p>
-                    <p className="text-blue-300 text-[9px] leading-relaxed">
+                    <p className={cn("text-blue-300 leading-relaxed", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
                       Configure these settings to allow the application to use your own Google Cloud project. 
                       This is required for standalone deployments.
                     </p>
                   </div>
 
                   <div className="space-y-2">
-                    <label className={cn("text-green-800 uppercase font-bold block", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client ID</label>
+                    <label className={cn("text-green-400 uppercase font-bold block", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client ID</label>
                     <input 
                       type="text"
                       value={googleClientId}
                       onChange={(e) => setGoogleClientId(e.target.value)}
                       placeholder="Enter Client ID"
-                      className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 placeholder:text-green-900", fontSize === 'large' ? "text-base" : "text-sm")}
+                      className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 placeholder:text-green-600", fontSize === 'large' ? "text-base" : "text-sm")}
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <label className={cn("text-green-800 uppercase font-bold block", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client Secret</label>
+                    <label className={cn("text-green-400 uppercase font-bold block", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client Secret</label>
                     <input 
                       type="password"
                       value={googleClientSecret}
                       onChange={(e) => setGoogleClientSecret(e.target.value)}
                       placeholder="Enter Client Secret"
-                      className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 placeholder:text-green-900", fontSize === 'large' ? "text-base" : "text-sm")}
+                      className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 placeholder:text-green-600", fontSize === 'large' ? "text-base" : "text-sm")}
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <label className={cn("text-green-800 uppercase font-bold block", fontSize === 'large' ? "text-sm" : "text-xs")}>Standalone App URL</label>
+                    <label className={cn("text-green-400 uppercase font-bold block", fontSize === 'large' ? "text-sm" : "text-xs")}>Standalone App URL</label>
                     <input 
                       type="text"
                       value={appUrl}
                       onChange={(e) => setAppUrl(e.target.value)}
                       placeholder="e.g. http://localhost:3000"
-                      className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 placeholder:text-green-900", fontSize === 'large' ? "text-base" : "text-sm")}
+                      className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 placeholder:text-green-600", fontSize === 'large' ? "text-base" : "text-sm")}
                     />
-                    <p className="text-[9px] text-green-800 italic">Used to calculate the OAuth Redirect URI.</p>
+                    <p className={cn("text-green-400 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Used to calculate the OAuth Redirect URI.</p>
                   </div>
 
                   <button 
@@ -1474,7 +1565,7 @@ export default function App() {
                   </button>
 
                   <div className="p-2 border border-red-900/30 rounded bg-red-950/10">
-                    <p className="text-red-500 text-[9px] font-bold">WARNING: Changing these settings will restart the OAuth client. You may need to reconnect Google Drive after saving.</p>
+                    <p className={cn("text-red-500 font-bold", fontSize === 'large' ? "text-xs" : "text-[9px]")}>WARNING: Changing these settings will restart the OAuth client. You may need to reconnect Google Drive after saving.</p>
                   </div>
                 </div>
               )}
