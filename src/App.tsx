@@ -1060,7 +1060,7 @@ export default function App() {
       {/* Terminal Body */}
       <div 
         ref={scrollRef}
-        className="flex-1 overflow-y-auto mb-4 space-y-1 scrollbar-hide"
+        className="flex-1 overflow-y-auto mb-4 space-y-1 scrollbar-hide px-6"
         onClick={() => inputRef.current?.focus()}
       >
         {logs.map((log) => (
@@ -1082,8 +1082,8 @@ export default function App() {
 
       {/* Input Area */}
       <div className={cn(
-        "flex items-center gap-2 border-t border-green-900 pt-4",
-        fontSize === 'large' ? "scale-105 origin-left" : ""
+        "flex items-center gap-2 border-t border-green-900 pt-4 px-6",
+        fontSize === 'large' ? "py-2" : ""
       )}>
         <span className={cn("text-green-400 font-bold shrink-0", fontSize === 'large' ? "text-lg" : "text-base")}>SCAN_FOB_ID:</span>
         <input
@@ -1441,13 +1441,18 @@ export default function App() {
                       <button 
                         onClick={handleExportToGoogleDrive}
                         className={cn(
-                          "w-full flex items-center justify-center gap-2 py-3 border rounded transition-all font-bold",
+                          "w-full flex items-center justify-center gap-3 px-4 py-3 border rounded transition-all font-bold text-center",
                           fontSize === 'large' ? "text-sm" : "text-xs",
                           "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40"
                         )}
                       >
-                        <Cloud size={18} />
-                        {isGDriveConnected ? 'EXPORT_TO_CONNECTED_GOOGLE_DRIVE' : 'CONNECT_GOOGLE_DRIVE_AND_EXPORT_CSV'}
+                        <div className="flex flex-col items-center gap-0.5">
+                          <div className="flex items-center gap-3">
+                            <Cloud size={18} className="shrink-0" />
+                            <span className="truncate">{isGDriveConnected ? 'EXPORT_TO_CONNECTED_GOOGLE_DRIVE' : 'CONNECT_GOOGLE_DRIVE_AND_EXPORT_CSV'}</span>
+                          </div>
+                          {!isGDriveConnected && <span className="text-[10px] opacity-70 ml-7">(DOUBLE_CLICK)</span>}
+                        </div>
                       </button>
                     </div>
                     
