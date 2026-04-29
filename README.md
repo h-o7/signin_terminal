@@ -9,9 +9,46 @@ A retro-styled terminal system for user check-ins with real-time feedback, CSV u
 - **Standalone Mode**: Configurable via UI to work without platform-specific environment variables.
 - **Accessibility**: Toggle between Normal and Large font sizes in settings.
 
+## Data Management
+
+### Database Storage
+The application uses **Firebase Firestore** as its primary database.
+- **Users**: Stored in the `users` collection.
+- **Logs**: Stored in the `logs` collection (linked by user/terminal ID).
+- **Settings**: Persistent configuration (Client IDs, App URL) is stored locally in `settings.json` at the root of the project to allow the app to boot with the correct OAuth context even when server starts.
+
+### Importing Users (CSV)
+To import users in bulk:
+1.  Navigate to **SYSTEM_SETTINGS** (gear icon).
+2.  Go to the **GENERAL** tab.
+3.  Click **IMPORT_USERS_VIA_CSV**.
+4.  Your CSV should have at least one of these columns (headers are case-insensitive):
+    - `fob_id`: Numerical ID for scanning.
+    - `user_id`: Numerical ID for manual entry.
+    - `username`: Unique identifier.
+    - `display_name`: (Optional) Custom name shown in terminal.
+
+## Packaging as an Executable (.exe)
+
+To convert this web application into a standalone Windows executable:
+
+### Option 1: Using `pkg` (Full-Stack bundle)
+This approach bundles the Node.js runtime and the server code.
+1.  **Build the frontend**: `npm run build`
+2.  **Install pkg**: `npm install -g pkg`
+3.  **Package**: `pkg . --targets node18-win-x64 --output sign-in-terminal.exe`
+4.  **Note**: Ensure `dist/` folder and `settings.json` are in the same directory as the `.exe` when distributing.
+
+### Option 2: Using Electron (Full Desktop App)
+For a better user experience with a dedicated window:
+1.  **Install Electron Forge**: `npm install --save-dev @electron-forge/cli`
+2.  **Initialize**: `npx electron-forge import`
+3.  **Configure**: Update `main.js` to start the Express server and load the local URL.
+4.  **Make**: `npm run make` (produces an installer/exe in `out/`).
+
 ## Standalone Configuration (API_CONFIG)
 
-To use this application outside of the AI Studio environment (e.g., as a packaged executable), you must configure your own Google Cloud credentials:
+To use this application outside of the AI Studio environment, you must configure your own Google Cloud credentials:
 
 1.  **Access Settings**: Click the gear icon (SYSTEM_SETTINGS) in the bottom-right.
 2.  **Navigate to API_CONFIG**: Select the `API_CONFIG` tab at the top of the settings menu.
@@ -20,29 +57,12 @@ To use this application outside of the AI Studio environment (e.g., as a package
     - **Google Client Secret**: Obtained from Google Cloud Console.
     - **Standalone App URL**: The URL where your app is running (e.g., `http://localhost:3000`).
 4.  **Save Config**: Click `SAVE_API_CONFIG` and confirm when prompted.
-5.  **Restart**: These settings are saved to `settings.json` at the project root and will persist after application restarts.
-
-**Note**: You must add the `OAuth Redirect URI` shown in the settings menu to your Google Cloud Console's "Authorized redirect URIs" list.
 
 ## Local Development
 
-1.  **Install dependencies**:
-    ```bash
-    npm install
-    ```
-2.  **Start the development server**:
-    ```bash
-    npm run dev
-    ```
-
-## Setup Environment Variables
-If not using the UI for configuration, you can use `.env`:
-```env
-GOOGLE_CLIENT_ID="your_id"
-GOOGLE_CLIENT_SECRET="your_secret"
-APP_URL="http://localhost:3000"
-```
+1.  **Install dependencies**: `npm install`
+2.  **Start the development server**: `npm run dev`
 
 ## System Requirements
 - Node.js (v18+)
-- (For Executable) A tool like `pkg` or `nexe` can be used to wrap the server and frontend into a single `.exe`.
+- Firebase Project (configured in `src/firebase.ts`)

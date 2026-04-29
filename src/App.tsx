@@ -1008,7 +1008,7 @@ export default function App() {
     )}>
       {/* Header */}
       <div className={cn(
-        "flex items-center justify-between border-b border-green-900 pb-2 mb-4 transition-all",
+        "flex flex-wrap items-center justify-between border-b border-green-900 pb-2 mb-4 transition-all gap-y-4",
         fontSize === 'large' ? "scale-105 origin-left" : ""
       )}>
         <div className="flex items-center gap-2">
@@ -1016,7 +1016,7 @@ export default function App() {
           <span className="font-bold tracking-wider">CMD_TERMINAL_V2.1</span>
           <span className="text-[10px] bg-green-900/30 px-2 py-0.5 rounded text-green-400 animate-pulse">LIVE</span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 justify-end">
           {user ? (
             <div className="flex items-center gap-2">
               <span className={cn("text-green-400", fontSize === 'large' ? "text-xs" : "text-[10px]")}>{user.email}</span>
@@ -1286,7 +1286,7 @@ export default function App() {
                     disabled={isExportingAll || isGeneratingReport}
                     className={cn(
                       "flex-1 flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded transition-all font-bold disabled:opacity-50",
-                      fontSize === 'large' ? "text-sm" : "text-xs"
+                      fontSize === 'large' ? "text-lg px-2" : "text-sm"
                     )}
                     title="Export all users to individual CSVs in a ZIP"
                   >
@@ -1298,15 +1298,7 @@ export default function App() {
                     EXPORT_ALL_TO_ZIP
                   </button>
                 </div>
-                <button 
-                  onClick={() => setShowReports(false)}
-                  className={cn(
-                    "w-full py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all font-bold",
-                    fontSize === 'large' ? "text-sm" : "text-xs"
-                  )}
-                >
-                  CANCEL
-                </button>
+
               </div>
             </div>
           </div>
@@ -1317,20 +1309,20 @@ export default function App() {
       {showSettings && (
         <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
           <div className={cn(
-            "max-w-lg w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)]",
+            "max-w-xl w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)]",
             fontSize === 'large' ? "scale-105" : ""
           )}>
-            <div className="flex items-center justify-between border-b border-green-900 pb-4">
-              <div className="flex items-center gap-4">
+            <div className="flex items-start justify-between border-b border-green-900 pb-4">
+              <div className="flex flex-wrap items-center gap-4 flex-1 min-w-0 pr-4">
                 <div className="flex items-center gap-2">
                   <Settings className="text-green-400" size={20} />
-                  <h2 className={cn("font-bold text-white", fontSize === 'large' ? "text-xl" : "text-lg")}>SYSTEM_SETTINGS</h2>
+                  <h2 className={cn("font-bold text-white whitespace-nowrap", fontSize === 'large' ? "text-xl" : "text-lg")}>SYSTEM_SETTINGS</h2>
                 </div>
                 <div className="flex items-center bg-green-900/20 rounded p-1">
                   <button 
                     onClick={() => setSettingsTab('general')}
                     className={cn(
-                      "px-3 py-1 text-[10px] font-bold rounded transition-colors",
+                      "px-3 py-1 text-[10px] font-bold rounded transition-colors whitespace-nowrap",
                       settingsTab === 'general' ? "bg-green-500 text-black" : "text-green-500 hover:bg-green-900/30"
                     )}
                   >
@@ -1339,28 +1331,31 @@ export default function App() {
                   <button 
                     onClick={() => setSettingsTab('api')}
                     className={cn(
-                      "px-3 py-1 text-[10px] font-bold rounded transition-colors",
+                      "px-3 py-1 text-[10px] font-bold rounded transition-colors whitespace-nowrap",
                       settingsTab === 'api' ? "bg-green-500 text-black" : "text-green-500 hover:bg-green-900/30"
                     )}
                   >
                     API_CONFIG
                   </button>
                 </div>
-              </div>
-              <div className="flex items-center gap-4">
                 <button 
                   onClick={() => setFontSize(prev => prev === 'normal' ? 'large' : 'normal')}
                   className={cn(
-                    "bg-green-900/30 px-2 py-1 rounded text-green-400 hover:bg-green-900/50 transition-colors uppercase font-bold",
-                    fontSize === 'large' ? "text-xs" : "text-[10px]"
+                    "bg-green-900/30 px-3 py-1 rounded text-green-400 hover:bg-green-900/50 transition-colors font-bold whitespace-nowrap",
+                    fontSize === 'large' ? "text-sm" : "text-xs"
                   )}
+                  title={fontSize === 'normal' ? 'SWITCH_TO_LARGE_FONT' : 'SWITCH_TO_NORMAL_FONT'}
                 >
-                  FONT_SIZE: {fontSize === 'normal' ? 'NORMAL' : 'LARGE'}
-                </button>
-                <button onClick={() => setShowSettings(false)} className="text-green-400 hover:text-green-500 transition-colors">
-                  <X size={24} />
+                  Aa
                 </button>
               </div>
+              
+              <button 
+                onClick={() => setShowSettings(false)} 
+                className="text-green-400 hover:text-green-500 transition-colors pt-1 shrink-0"
+              >
+                <X size={24} />
+              </button>
             </div>
 
             <div className={cn("space-y-4", fontSize === 'large' ? "text-base" : "text-sm")}>
@@ -1462,22 +1457,22 @@ export default function App() {
                     {!isGDriveConnected && (
                       <div className="p-2 bg-blue-950/20 border border-blue-900/30 rounded space-y-2">
                         <div>
-                          <p className={cn("text-blue-400 uppercase font-bold mb-1", fontSize === 'large' ? "text-[10px]" : "text-[9px]")}>OAuth Redirect URI:</p>
-                          <code className={cn("text-blue-300 break-all bg-black/50 p-1 block", fontSize === 'large' ? "text-[10px]" : "text-[9px]")}>
+                          <p className={cn("text-blue-400 uppercase font-bold mb-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>OAuth Redirect URI:</p>
+                          <code className={cn("text-blue-300 break-all bg-black/50 p-1 block", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
                             {appUrl ? `${appUrl.replace(/\/$/, '')}/auth/callback` : `${window.location.origin}/auth/callback`}
                           </code>
                         </div>
                         
                         <div className="p-2 border border-red-900/50 bg-red-950/20 rounded">
-                          <p className={cn("text-red-400 font-bold uppercase mb-1 flex items-center gap-1", fontSize === 'large' ? "text-[10px]" : "text-[9px]")}>
+                          <p className={cn("text-red-400 font-bold uppercase mb-1 flex items-center gap-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
                             <AlertTriangle size={10} /> Troubleshooting:
                           </p>
-                          <p className={cn("text-red-300 leading-tight italic", fontSize === 'large' ? "text-[9px]" : "text-[8px]")}>
+                          <p className={cn("text-red-300 leading-tight italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
                             If you encounter 404 errors during authentication, ensure your "Standalone App URL" in API_CONFIG matches exactly where you are running the app, or open the application in a new tab.
                           </p>
                         </div>
                         
-                        <p className={cn("text-blue-800 mt-1 italic", fontSize === 'large' ? "text-[9px]" : "text-[8px]")}>Add the Redirect URI to your Google Cloud Console Authorized Redirect URIs.</p>
+                        <p className={cn("text-blue-400 mt-1 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Add the Redirect URI to your Google Cloud Console Authorized Redirect URIs.</p>
                       </div>
                     )}
                   </div>
