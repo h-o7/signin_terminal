@@ -52,7 +52,14 @@ export default function App() {
   const [selectedTimezone, setSelectedTimezone] = useState<string>(
     localStorage.getItem('terminal_timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone
   );
-  const [fontSize, setFontSize] = useState<'normal' | 'large'>('normal');
+  const [fontSize, setFontSize] = useState<'normal' | 'large'>(
+    (localStorage.getItem('terminal_font_size') as 'normal' | 'large') || 'normal'
+  );
+
+  // Persist font size
+  useEffect(() => {
+    localStorage.setItem('terminal_font_size', fontSize);
+  }, [fontSize]);
   const [settingsTab, setSettingsTab] = useState<'general' | 'api'>('general');
   const [googleClientId, setGoogleClientId] = useState('');
   const [googleClientSecret, setGoogleClientSecret] = useState('');
@@ -1009,17 +1016,17 @@ export default function App() {
       {/* Header */}
       <div className={cn(
         "flex flex-wrap items-center justify-between border-b border-green-900 pb-2 mb-4 transition-all gap-y-4",
-        fontSize === 'large' ? "scale-105 origin-left" : ""
+        fontSize === 'large' ? "py-2" : ""
       )}>
         <div className="flex items-center gap-2">
           <TerminalIcon size={20} />
           <span className="font-bold tracking-wider">CMD_TERMINAL_V2.1</span>
           <span className="text-[10px] bg-green-900/30 px-2 py-0.5 rounded text-green-400 animate-pulse">LIVE</span>
         </div>
-        <div className="flex flex-wrap items-center gap-3 justify-end">
+        <div className="flex flex-wrap items-center gap-3 justify-end flex-1 min-w-0">
           {user ? (
-            <div className="flex items-center gap-2">
-              <span className={cn("text-green-400", fontSize === 'large' ? "text-xs" : "text-[10px]")}>{user.email}</span>
+            <div className="flex flex-wrap items-center gap-2 justify-end">
+              <span className={cn("text-green-400 truncate max-w-[150px] sm:max-w-none", fontSize === 'large' ? "text-xs" : "text-[10px]")}>{user.email}</span>
               <button 
                 onClick={() => setShowUserList(true)} 
                 className="p-1 hover:bg-green-900/30 rounded text-green-400"
