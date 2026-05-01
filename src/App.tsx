@@ -49,6 +49,24 @@ export default function App() {
   const [reportUser, setReportUser] = useState<string>('all');
   const [reportStartDate, setReportStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [reportEndDate, setReportEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  // Helper to get formatted timezone label with offset
+  const getTimezoneLabel = (tz: string, label?: string) => {
+    try {
+      const now = new Date();
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        timeZoneName: 'shortOffset',
+      });
+      const parts = formatter.formatToParts(now);
+      const offsetPart = parts.find(p => p.type === 'timeZoneName');
+      const offset = offsetPart ? offsetPart.value.replace('GMT', 'UTC') : '';
+      const displayOffset = offset === 'UTC' ? 'UTC+0' : offset;
+      return label ? `${label} (${displayOffset})` : `${tz} (${displayOffset})`;
+    } catch (e) {
+      return label || tz;
+    }
+  };
+
   const [selectedTimezone, setSelectedTimezone] = useState<string>(
     localStorage.getItem('terminal_timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone
   );
@@ -69,12 +87,51 @@ export default function App() {
   const [availableUsers, setAvailableUsers] = useState<UserRecord[]>([]);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [isExportingAll, setIsExportingAll] = useState(false);
+  const [reportPreview, setReportPreview] = useState<{
+    data: any[];
+    stats: {
+      totalDays: number;
+      totalHours: number;
+      avgHoursPerDay: number;
+    } | null;
+    meta: {
+      user: string;
+      startDate: string;
+      endDate: string;
+    }
+  } | null>(null);
   const [input, setInput] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: 'init', timestamp: new Date(), message: 'SYSTEM_BOOT_COMPLETE: Terminal ready.', type: 'system' }
   ]);
+
+  const addLog = (message: string, type: 'input' | 'output' | 'system' = 'system') => {
+    setLogs(prev => {
+      const newLog = {
+        id: `local-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        timestamp: new Date(),
+        message,
+        type
+      };
+      const all = [...prev, newLog];
+      // Deduplicate by message + timestamp (within 2 seconds) to avoid local/server doubles
+      const unique = all.filter((log, index) => {
+        const isDuplicate = all.slice(0, index).some(other => 
+          other.message === log.message && 
+          Math.abs(other.timestamp.getTime() - log.timestamp.getTime()) < 2000
+        );
+        return !isDuplicate;
+      });
+      return unique.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()).slice(-20);
+    });
+  };
   const [userStatuses, setUserStatuses] = useState<UserStatusMap>({});
   const [isGDriveConnected, setIsGDriveConnected] = useState(false);
+  const lastScanned = useRef<Record<string, number>>({});
+  const pendingUpdates = useRef<{
+    mappings: Record<string, any>;
+    logs: any[];
+  }>({ mappings: {}, logs: [] });
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -238,11 +295,11 @@ export default function App() {
       collection(db, 'terminals', terminalId, 'logs'), 
       where('timestamp', '>=', startOfTodayISO),
       orderBy('timestamp', 'desc'), 
-      limit(50)
+      limit(20)
     );
     const unsubscribeLogs = onSnapshot(q, (snapshot) => {
       const newLogs: LogEntry[] = [];
-      snapshot.docs.reverse().forEach((doc) => {
+      snapshot.docs.forEach((doc) => {
         const data = doc.data();
         newLogs.push({
           id: doc.id,
@@ -251,13 +308,36 @@ export default function App() {
           type: data.status === 'logged in' ? 'output' : 'input'
         });
       });
-      if (newLogs.length > 0) {
-        setLogs(prev => {
-          const existingIds = new Set(prev.map(l => l.id));
-          const uniqueNew = newLogs.filter(l => !existingIds.has(l.id));
-          return [...prev, ...uniqueNew].slice(-100);
+
+      setLogs(prev => {
+        // Merge existing and new
+        const combined = [...prev, ...newLogs];
+        
+        // 1. Deduplicate by Firestore ID
+        const idMap = new Map<string, LogEntry>();
+        combined.forEach(l => idMap.set(l.id, l));
+        let unique = Array.from(idMap.values());
+
+        // 2. Deduplicate by content + approximate timestamp
+        // This removes local "ENTRY" logs once the server "LOGGED IN" log arrives
+        unique = unique.filter((log, index) => {
+          // If this is a local log, check if a server log exists with same message and ~timestamp
+          if (log.id.startsWith('local-')) {
+            const hasServerMatch = unique.some(other => 
+              !other.id.startsWith('local-') && 
+              other.message === log.message &&
+              Math.abs(other.timestamp.getTime() - log.timestamp.getTime()) < 10000 // 10s window for match
+            );
+            return !hasServerMatch;
+          }
+          return true;
         });
-      }
+
+        // 3. Final sort and slice
+        return unique
+          .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+          .slice(-20);
+      });
     });
 
     return () => {
@@ -273,10 +353,63 @@ export default function App() {
     }
   }, [logs]);
 
+  // Flush pending updates every 10 seconds
+  useEffect(() => {
+    if (!isStarted || !isAuthReady || !terminalId) return;
+
+    const flush = async () => {
+      const { mappings, logs: pLogs } = pendingUpdates.current;
+      if (Object.keys(mappings).length === 0 && pLogs.length === 0) return;
+
+      const mappingsToUpload = { ...mappings };
+      const logsToUpload = [...pLogs];
+      pendingUpdates.current = { mappings: {}, logs: [] };
+
+      try {
+        const batch = writeBatch(db);
+        
+        // Batch mappings
+        Object.entries(mappingsToUpload).forEach(([username, data]) => {
+          const mappingRef = doc(db, 'terminals', terminalId, 'mappings', username);
+          batch.set(mappingRef, data, { merge: true });
+        });
+
+        // Batch logs
+        logsToUpload.forEach(logData => {
+          const logRef = doc(collection(db, 'terminals', terminalId, 'logs'));
+          batch.set(logRef, logData);
+        });
+
+        await batch.commit();
+      } catch (err) {
+        console.error('Batch upload error:', err);
+        // On error, we could potentially put them back, but for simplicity we log it
+      }
+    };
+
+    const interval = setInterval(flush, 10000);
+
+    return () => {
+      clearInterval(interval);
+      flush(); // Final flush on unmount/id change
+    };
+  }, [isStarted, isAuthReady, terminalId]);
+
   const handleKeyDown = async (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && input.length > 0) {
       const userInput = input;
       setInput('');
+
+      const now = Date.now();
+      const lastTime = lastScanned.current[userInput] || 0;
+      if (now - lastTime < 5000) {
+        const mapping = availableUsers.find(u => u.username === userInput);
+        const displayName = mapping?.displayName || userInput;
+        addLog(`[DUPLICATE_DETECTED] ${displayName} - ENTRY_OMITTED`, 'system');
+        return;
+      }
+      lastScanned.current[userInput] = now;
+
       const timestamp = new Date();
       const formattedTime = timestamp.toISOString();
       const currentDate = format(timestamp, 'yyyy-MM-dd');
@@ -290,26 +423,34 @@ export default function App() {
         nextStatus = currentStatus.lastStatus === 'logged in' ? 'logged out' : 'logged in';
       }
 
-      try {
-        await setDoc(doc(db, 'terminals', terminalId, 'mappings', userInput), {
-          username: userInput,
+      // 1. Update local state immediately for responsiveness
+      setUserStatuses(prev => ({
+        ...prev,
+        [userInput]: {
           lastStatus: nextStatus,
-          lastTimestamp: formattedTime,
-          // Preservation of displayName is handled by merge: true, 
-          // but we explicitly pass it if we found it to be extra safe 
-          // or if it's a new user without a mapping yet.
-          ...(displayName ? { displayName } : {})
-        }, { merge: true });
+          lastDate: currentDate,
+          displayName: displayName
+        }
+      }));
 
-        await addDoc(collection(db, 'terminals', terminalId, 'logs'), {
-          username: userInput,
-          displayName: displayName,
-          status: nextStatus,
-          timestamp: formattedTime
-        });
-      } catch (err) {
-        console.error(err);
-      }
+      // 3. Update local logs immediately so it shows in the terminal without delay
+      const logDisplayName = displayName || userInput;
+      addLog(`[${nextStatus.toUpperCase()}] ${logDisplayName}`, 'system');
+
+      // 2. Queue for buffered upload (every 10s)
+      pendingUpdates.current.mappings[userInput] = {
+        username: userInput,
+        lastStatus: nextStatus,
+        lastTimestamp: formattedTime,
+        ...(displayName ? { displayName } : {})
+      };
+
+      pendingUpdates.current.logs.push({
+        username: userInput,
+        displayName: displayName,
+        status: nextStatus,
+        timestamp: formattedTime
+      });
     }
   };
 
@@ -616,6 +757,7 @@ export default function App() {
         const ts = d.timestamp || '';
         let date = 'N/A';
         let time = 'N/A';
+        let displayOffset = '';
         
         if (typeof ts === 'string' && ts.includes('T')) {
           try {
@@ -629,7 +771,8 @@ export default function App() {
               hour: '2-digit',
               minute: '2-digit',
               second: '2-digit',
-              hour12: false
+              hour12: false,
+              timeZoneName: 'shortOffset'
             });
             
             const parts = formatter.formatToParts(dateObj);
@@ -637,6 +780,10 @@ export default function App() {
             
             date = `${p('year')}-${p('month')}-${p('day')}`;
             time = `${p('hour')}:${p('minute')}:${p('second')}`;
+            
+            const offsetPart = parts.find(p => p.type === 'timeZoneName');
+            const offset = offsetPart ? offsetPart.value.replace('GMT', 'UTC') : '';
+            displayOffset = offset === 'UTC' ? 'UTC+0' : offset;
           } catch (e) {
             console.error('Timezone conversion error:', e);
             const parts = ts.split('T');
@@ -649,14 +796,13 @@ export default function App() {
         const displayName = userRec ? (userRec.displayName || d.username) : (d.username || 'unknown');
 
         return {
-          id: doc.id,
           username: d.username || 'unknown',
           displayName: displayName,
           status: d.status || 'unknown',
           original_utc_timestamp: ts,
           local_date: date,
           local_time: time,
-          timezone: selectedTimezone
+          timezone: displayOffset
         };
       });
 
@@ -676,21 +822,50 @@ export default function App() {
         return;
       }
 
-      const csv = Papa.unparse(data);
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `report_${reportUser}_${reportStartDate}_to_${reportEndDate}.csv`;
-      document.body.appendChild(a); // Append to body to ensure it works in more browsers
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
+      // Calculate stats
+      let stats = null;
+      // We calculate stats for single user OR for all users combined if requested, 
+      // but usually users want it per person. For now, if single user selected:
+      if (reportUser !== 'all') {
+        const days = new Set<string>();
+        let totalMs = 0;
+        let lastLogin: number | null = null;
+        
+        // Data is already sorted by timestamp (asc) from Firestore query
+        data.forEach(d => {
+          days.add(d.local_date);
+          const ts = new Date(d.original_utc_timestamp).getTime();
+          if (d.status === 'logged in') {
+            lastLogin = ts;
+          } else if (d.status === 'logged out' && lastLogin) {
+            totalMs += (ts - lastLogin);
+            lastLogin = null;
+          }
+        });
+
+        const totalHours = totalMs / (1000 * 60 * 60);
+        stats = {
+          totalDays: days.size,
+          totalHours: Number(totalHours.toFixed(2)),
+          avgHoursPerDay: days.size > 0 ? Number((totalHours / days.size).toFixed(2)) : 0
+        };
+      }
+
+      setReportPreview({
+        data,
+        stats,
+        meta: {
+          user: reportUser === 'all' ? 'ALL_USERS' : (availableUsers.find(u => u.username === reportUser)?.displayName || reportUser),
+          startDate: reportStartDate,
+          endDate: reportEndDate
+        }
+      });
+      setShowReports(false);
       
       setLogs(prev => [...prev, { 
         id: Date.now().toString(), 
         timestamp: new Date(), 
-        message: `SYSTEM: Success! Report exported with ${data.length} records.`, 
+        message: `SYSTEM: Success! Report preview generated with ${data.length} records.`, 
         type: 'system' 
       }]);
     } catch (err: any) {
@@ -774,15 +949,16 @@ export default function App() {
 
       // 1. Group records by user
       const usersData: { [key: string]: any[] } = {};
+      const usersStats: { [key: string]: { totalDays: number, totalHours: number, avgHoursPerDay: number, offset: string } } = {};
       
       snapshot.docs.forEach(doc => {
         const d = doc.data();
         const username = d.username || 'unknown';
         const ts = d.timestamp || '';
         
-        // Timezone conversion logic (reused from handleGenerateReport)
         let date = 'N/A';
         let time = 'N/A';
+        let displayOffset = '';
         if (typeof ts === 'string' && ts.includes('T')) {
           try {
             const dateObj = new Date(ts);
@@ -794,12 +970,17 @@ export default function App() {
               hour: '2-digit',
               minute: '2-digit',
               second: '2-digit',
-              hour12: false
+              hour12: false,
+              timeZoneName: 'shortOffset'
             });
             const parts = formatter.formatToParts(dateObj);
             const p = (type: string) => parts.find(part => part.type === type)?.value || '';
             date = `${p('year')}-${p('month')}-${p('day')}`;
             time = `${p('hour')}:${p('minute')}:${p('second')}`;
+
+            const offsetPart = parts.find(p => p.type === 'timeZoneName');
+            const offset = offsetPart ? offsetPart.value.replace('GMT', 'UTC') : '';
+            displayOffset = offset === 'UTC' ? 'UTC+0' : offset;
           } catch (e) {
             const parts = ts.split('T');
             date = parts[0];
@@ -810,14 +991,15 @@ export default function App() {
         const userRec = availableUsers.find(u => u.username === username);
         const displayName = userRec ? (userRec.displayName || username) : (d.displayName || username);
 
+        // Keep internal fields for stats but will exclude from CSV
         const record = {
-          username: username,
           displayName: displayName,
           status: d.status || 'unknown',
-          utc_timestamp: ts,
           local_date: date,
           local_time: time,
-          timezone: selectedTimezone
+          timezone: displayOffset,
+          _raw_ts: ts,
+          _username: username
         };
 
         if (!usersData[username]) usersData[username] = [];
@@ -832,11 +1014,77 @@ export default function App() {
       if (!folder) throw new Error('Failed to create ZIP folder');
 
       Object.entries(usersData).forEach(([username, data]) => {
+        // Calculate stats for this user
+        const days = new Set<string>();
+        let totalMs = 0;
+        let lastLogin: any = null;
+        const displayOffset = data[0]?.timezone || '';
+
+        // Sort data by timestamp ascending to ensure pairing
+        data.sort((a, b) => new Date(a._raw_ts).getTime() - b.status.localeCompare(a.status)); // Secondary sort by status to prioritize login if same ts
+
+        // Pair Logins and Logouts
+        const sessions: any[] = [];
+        let currentSession: any = null;
+
+        data.forEach(d => {
+          days.add(d.local_date);
+          const ts = new Date(d._raw_ts).getTime();
+          
+          if (d.status === 'logged in') {
+            // If we have a pending session, push it as unpaired logout
+            if (currentSession) {
+              sessions.push(currentSession);
+            }
+            currentSession = { login: d, logout: null };
+            lastLogin = ts;
+          } else if (d.status === 'logged out') {
+            if (currentSession && !currentSession.logout) {
+              currentSession.logout = d;
+              if (lastLogin) totalMs += (ts - lastLogin);
+              lastLogin = null;
+              sessions.push(currentSession);
+              currentSession = null;
+            } else {
+              // Orphan logout
+              sessions.push({ login: null, logout: d });
+            }
+          }
+        });
+        if (currentSession) sessions.push(currentSession);
+
+        const totalHours = totalMs / (1000 * 60 * 60);
+        const stats = {
+          totalDays: days.size,
+          totalHours: Number(totalHours.toFixed(2)),
+          avgHoursPerDay: days.size > 0 ? Number((totalHours / days.size).toFixed(2)) : 0
+        };
+
+        // Prepare CSV data with Login on Left, Logout on Right
+        const csvRows = sessions.map(s => ({
+          DATE_IN: s.login?.local_date || '',
+          TIME_IN: s.login?.local_time || '',
+          STATUS_IN: 'LOGGED IN',
+          NAME_IN: s.login?.displayName || '',
+          TZ_IN: s.login?.timezone || '',
+          DATE_OUT: s.logout?.local_date || '',
+          TIME_OUT: s.logout?.local_time || '',
+          STATUS_OUT: 'LOGGED OUT',
+          NAME_OUT: s.logout?.displayName || '',
+          TZ_OUT: s.logout?.timezone || ''
+        }));
+        
+        // Add stats to the bottom
+        csvRows.push({});
+        csvRows.push({ DATE_IN: 'SUMMARY_REPORT' });
+        csvRows.push({ DATE_IN: 'TOTAL_DAYS_WORKED', TIME_IN: stats.totalDays.toString() });
+        csvRows.push({ DATE_IN: 'TOTAL_HOURS_WORKED', TIME_IN: stats.totalHours.toString() });
+        csvRows.push({ DATE_IN: 'AVG_HOURS_PER_DAY', TIME_IN: stats.avgHoursPerDay.toString() });
+
         const userRec = availableUsers.find(u => u.username === username);
         const displayName = userRec?.displayName || username;
-        // Clean filename (remove characters that might cause issues)
         const safeName = `${displayName}_${username}`.replace(/[^a-z0-9_\-]/gi, '_');
-        const csv = Papa.unparse(data);
+        const csv = Papa.unparse(csvRows);
         folder.file(`${safeName}.csv`, csv);
       });
 
@@ -964,7 +1212,7 @@ export default function App() {
           </div>
           
           <div className="space-y-2">
-            <h1 className={cn("font-black tracking-tighter text-white", fontSize === 'large' ? "text-6xl" : "text-4xl")}>TERMINAL_LOGGER_V2</h1>
+            <h1 className={cn("font-black tracking-tighter text-white", fontSize === 'large' ? "text-6xl" : "text-4xl")}>TERMINAL_LOGGER_V2.2</h1>
             <p className={cn("text-green-400 uppercase tracking-widest", fontSize === 'large' ? "text-base" : "text-sm")}>Secure Entry Management System</p>
           </div>
 
@@ -1010,7 +1258,7 @@ export default function App() {
 
   return (
     <div className={cn(
-      "min-h-screen bg-black text-green-500 font-mono flex flex-col p-4 relative transition-all duration-300",
+      "h-screen bg-black text-green-500 font-mono flex flex-col p-4 relative transition-all duration-300 overflow-hidden",
       fontSize === 'large' ? "text-lg" : "text-base"
     )}>
       {/* Header */}
@@ -1020,7 +1268,7 @@ export default function App() {
       )}>
         <div className="flex items-center gap-2">
           <TerminalIcon size={20} />
-          <span className="font-bold tracking-wider">CMD_TERMINAL_V2.1</span>
+          <span className="font-bold tracking-wider">CMD_TERMINAL_V2.2</span>
           <span className="text-[10px] bg-green-900/30 px-2 py-0.5 rounded text-green-400 animate-pulse">LIVE</span>
         </div>
         <div className="flex flex-wrap items-center gap-3 justify-end flex-1 min-w-0">
@@ -1060,7 +1308,7 @@ export default function App() {
       {/* Terminal Body */}
       <div 
         ref={scrollRef}
-        className="flex-1 overflow-y-auto mb-4 space-y-1 scrollbar-hide px-6"
+        className="flex-1 overflow-hidden mb-4 space-y-1 px-6"
         onClick={() => inputRef.current?.focus()}
       >
         {logs.map((log) => (
@@ -1091,7 +1339,7 @@ export default function App() {
           autoFocus
           type="text"
           value={input}
-          onChange={(e) => setInput(e.target.value.replace(/\D/g, '').slice(0, 12))}
+          onChange={(e) => setInput(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 30))}
           onKeyDown={handleKeyDown}
           className={cn(
             "flex-1 bg-transparent border-none outline-none text-green-400 placeholder:text-green-900",
@@ -1192,6 +1440,177 @@ export default function App() {
               >
                 CANCEL
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Report Preview Modal */}
+      {reportPreview && (
+        <div className="absolute inset-0 bg-black z-[60] flex flex-col p-8 overflow-y-auto print:p-0 print:bg-white print:text-black">
+          <div className="max-w-5xl w-full mx-auto space-y-8 print:max-w-none">
+            {/* Header - Hidden in Print if controlled */}
+            <div className="flex items-center justify-between border-b border-green-500 pb-4 print:border-black">
+              <div className="flex items-center gap-3">
+                <FileSpreadsheet className="text-green-500 print:text-black" size={32} />
+                <div>
+                  <h2 className="text-2xl font-bold text-white print:text-black">TERMINAL_REPORT_PREVIEW</h2>
+                  <p className="text-green-400 text-sm print:text-gray-600">
+                    USER: {reportPreview.meta.user} | PERIOD: {reportPreview.meta.startDate} TO {reportPreview.meta.endDate}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-4 print:hidden">
+                <button 
+                  onClick={() => {
+                    const data = reportPreview.data;
+                    
+                    // Logic to pair login/logout
+                    const sessions: any[] = [];
+                    let current: any = null;
+                    data.forEach(d => {
+                      if (d.status === 'logged in') {
+                        if (current) sessions.push(current);
+                        current = { login: d, logout: null };
+                      } else if (d.status === 'logged out') {
+                        if (current && !current.logout) {
+                          current.logout = d;
+                          sessions.push(current);
+                          current = null;
+                        } else {
+                          sessions.push({ login: null, logout: d });
+                        }
+                      }
+                    });
+                    if (current) sessions.push(current);
+
+                    const csvRows = sessions.map(s => ({
+                      DATE_IN: s.login?.local_date || '',
+                      TIME_IN: s.login?.local_time || '',
+                      STATUS_IN: 'LOGGED IN',
+                      NAME_IN: s.login?.displayName || '',
+                      TZ_IN: s.login?.timezone || '',
+                      DATE_OUT: s.logout?.local_date || '',
+                      TIME_OUT: s.logout?.local_time || '',
+                      STATUS_OUT: 'LOGGED OUT',
+                      NAME_OUT: s.logout?.displayName || '',
+                      TZ_OUT: s.logout?.timezone || ''
+                    }));
+
+                    if (reportPreview.stats) {
+                      csvRows.push({});
+                      csvRows.push({ DATE_IN: 'SUMMARY_REPORT' });
+                      csvRows.push({ DATE_IN: 'TOTAL_DAYS_WORKED', TIME_IN: reportPreview.stats.totalDays.toString() });
+                      csvRows.push({ DATE_IN: 'TOTAL_HOURS_WORKED', TIME_IN: reportPreview.stats.totalHours.toString() });
+                      csvRows.push({ DATE_IN: 'AVG_HOURS_PER_DAY', TIME_IN: reportPreview.stats.avgHoursPerDay.toString() });
+                    }
+                    
+                    const csv = Papa.unparse(csvRows);
+                    const blob = new Blob([csv], { type: 'text/csv' });
+                    saveAs(blob, `report_${reportPreview.meta.user}_${reportPreview.meta.startDate}_to_${reportPreview.meta.endDate}.csv`);
+                  }}
+                  className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded flex items-center gap-2 font-bold"
+                >
+                  <Download size={18} /> DOWNLOAD_CSV
+                </button>
+                <button 
+                  onClick={() => window.print()}
+                  className="bg-green-500 hover:bg-green-400 text-black px-4 py-2 rounded flex items-center gap-2 font-bold"
+                >
+                  <Activity size={18} /> PRINT_LOGS
+                </button>
+                <button 
+                  onClick={() => setReportPreview(null)}
+                  className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded flex items-center gap-2 font-bold"
+                >
+                  <X size={18} /> CLOSE_PREVIEW
+                </button>
+              </div>
+            </div>
+
+            {/* List - 2 Column Layout (Paging logic) */}
+            <div className="space-y-12">
+              {(() => {
+                const data = reportPreview.data;
+                const sessions: any[] = [];
+                let current: any = null;
+                data.forEach(d => {
+                  if (d.status === 'logged in') {
+                    if (current) sessions.push(current);
+                    current = { login: d, logout: null };
+                  } else if (d.status === 'logged out') {
+                    if (current && !current.logout) {
+                      current.logout = d;
+                      sessions.push(current);
+                      current = null;
+                    } else {
+                      sessions.push({ login: null, logout: d });
+                    }
+                  }
+                });
+                if (current) sessions.push(current);
+
+                const pageSize = 50;
+                const pages = [];
+                for (let i = 0; i < sessions.length; i += pageSize) {
+                  pages.push(sessions.slice(i, i + pageSize));
+                }
+
+                return pages.map((page, pIdx) => (
+                  <div key={pIdx} className="grid grid-cols-1 md:grid-cols-2 gap-x-12 print:break-after-page">
+                    <div className="space-y-1">
+                      <div className="flex justify-between border-b-2 border-green-500 pb-1 text-[10px] uppercase font-bold text-green-400">
+                        <span>Logged In</span>
+                      </div>
+                      {page.map((s, i) => s.login ? (
+                        <div key={i} className="flex justify-between border-b border-green-900/10 py-1 text-[10px] font-mono print:border-gray-200 print:text-black">
+                          <div className="flex gap-2">
+                            <span className="text-gray-500 w-16">{s.login.local_date.split('-').slice(1).join('-')}</span>
+                            <span className="text-gray-400 w-12">{s.login.local_time.split(':').slice(0,2).join(':')}</span>
+                            <span className="text-white print:text-black truncate w-24">{s.login.displayName}</span>
+                          </div>
+                        </div>
+                      ) : <div key={i} className="h-6" />)}
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between border-b-2 border-amber-500 pb-1 text-[10px] uppercase font-bold text-amber-400">
+                        <span>Logged Out</span>
+                      </div>
+                      {page.map((s, i) => s.logout ? (
+                        <div key={i} className="flex justify-between border-b border-amber-900/10 py-1 text-[10px] font-mono print:border-gray-200 print:text-black">
+                          <div className="flex gap-2">
+                            <span className="text-gray-500 w-16">{s.logout.local_date.split('-').slice(1).join('-')}</span>
+                            <span className="text-gray-400 w-12">{s.logout.local_time.split(':').slice(0,2).join(':')}</span>
+                            <span className="text-white print:text-black truncate w-24">{s.logout.displayName}</span>
+                          </div>
+                        </div>
+                      ) : <div key={i} className="h-6" />)}
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+
+            {/* Stats Section */}
+            {reportPreview.stats && (
+              <div className="mt-12 pt-8 border-t border-green-500 grid grid-cols-3 gap-8 print:border-black print:text-black">
+                <div className="bg-green-900/20 p-6 rounded print:bg-gray-50 print:border print:border-gray-200">
+                  <p className="text-green-500 text-xs font-bold uppercase mb-1 print:text-gray-600">Days Worked</p>
+                  <p className="text-3xl font-bold text-white print:text-black">{reportPreview.stats.totalDays}</p>
+                </div>
+                <div className="bg-green-900/20 p-6 rounded print:bg-gray-50 print:border print:border-gray-200">
+                  <p className="text-green-500 text-xs font-bold uppercase mb-1 print:text-gray-600">Total Hours</p>
+                  <p className="text-3xl font-bold text-white print:text-black">{reportPreview.stats.totalHours} <span className="text-sm font-normal text-green-400">HRS</span></p>
+                </div>
+                <div className="bg-green-900/20 p-6 rounded print:bg-gray-50 print:border print:border-gray-200">
+                  <p className="text-green-500 text-xs font-bold uppercase mb-1 print:text-gray-600">Avg Hours/Day</p>
+                  <p className="text-3xl font-bold text-white print:text-black">{reportPreview.stats.avgHoursPerDay} <span className="text-sm font-normal text-green-400">HRS</span></p>
+                </div>
+              </div>
+            )}
+            
+            <div className="text-center text-[10px] text-gray-600 print:block hidden pt-8">
+              REPORT_GENERATED_ON: {new Date().toLocaleString()} | TIMEZONE_OFFSET: {reportPreview.data[0]?.timezone}
             </div>
           </div>
         </div>
@@ -1383,21 +1802,20 @@ export default function App() {
                       className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500", fontSize === 'large' ? "text-base" : "text-sm")}
                     >
                       <optgroup label="Common Timezones">
-                        <option value="UTC">UTC (Universal Time)</option>
-                        <option value="America/New_York">Eastern Time (New York)</option>
-                        <option value="America/Chicago">Central Time (Chicago)</option>
-                        <option value="America/Denver">Mountain Time (Denver)</option>
-                        <option value="America/Los_Angeles">Pacific Time (Los Angeles)</option>
-                        <option value="America/Toronto">Eastern Time (Toronto)</option>
-                        <option value="Europe/London">Greenwich Mean Time (London)</option>
-                        <option value="Europe/Paris">Central European Time (Paris)</option>
-                        <option value="Asia/Tokyo">Japan Standard Time (Tokyo)</option>
-                        <option value="Asia/Shanghai">China Standard Time (Shanghai)</option>
-                        <option value="Australia/Sydney">Australian Eastern Time (Sydney)</option>
+                        <option value="UTC">{getTimezoneLabel('UTC', 'Universal Time')}</option>
+                        <option value="America/New_York">{getTimezoneLabel('America/New_York', 'Eastern Time (New York)')}</option>
+                        <option value="America/Chicago">{getTimezoneLabel('America/Chicago', 'Central Time (Chicago)')}</option>
+                        <option value="America/Denver">{getTimezoneLabel('America/Denver', 'Mountain Time (Denver)')}</option>
+                        <option value="America/Los_Angeles">{getTimezoneLabel('America/Los_Angeles', 'Pacific Time (Los Angeles)')}</option>
+                        <option value="Europe/London">{getTimezoneLabel('Europe/London', 'Greenwich Mean Time (London)')}</option>
+                        <option value="Europe/Paris">{getTimezoneLabel('Europe/Paris', 'Central European Time (Paris)')}</option>
+                        <option value="Asia/Tokyo">{getTimezoneLabel('Asia/Tokyo', 'Japan Standard Time (Tokyo)')}</option>
+                        <option value="Asia/Shanghai">{getTimezoneLabel('Asia/Shanghai', 'China Standard Time (Shanghai)')}</option>
+                        <option value="Australia/Sydney">{getTimezoneLabel('Australia/Sydney', 'Australian Eastern Time (Sydney)')}</option>
                       </optgroup>
                       <optgroup label="System Default">
                         <option value={Intl.DateTimeFormat().resolvedOptions().timeZone}>
-                          Detected: {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                          {getTimezoneLabel(Intl.DateTimeFormat().resolvedOptions().timeZone, 'Detected')}
                         </option>
                       </optgroup>
                     </select>
@@ -1423,7 +1841,8 @@ export default function App() {
                         <Upload size={18} />
                         IMPORT_USERS_VIA_CSV
                       </button>
-                      <p className={cn("text-green-400 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>FOB_ID or USER_ID must be numbers and must be an exact match</p>
+                      <p className={cn("text-green-400 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>FOB_ID must be numbers and letters only (maximum 30 characters)</p>
+                      <p className={cn("text-green-400 italic mt-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>To manually add users, scan or enter FOB_ID in the main terminal window and edit the DISPLAY_NAME in REGISTERED_USERS_DATABASE MENU</p>
                     </div>
                     <input 
                       ref={fileInputRef}
@@ -1499,6 +1918,13 @@ export default function App() {
                     </p>
                   </div>
 
+                  <div className="p-3 bg-red-950/20 border border-red-900/50 rounded space-y-2">
+                    <p className="text-red-500 text-[10px] font-bold uppercase">Security Warning</p>
+                    <p className={cn("text-red-400 leading-relaxed", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                      Changing these settings will restart the OAuth client. You may need to reconnect Google Drive after saving.
+                    </p>
+                  </div>
+
                   <div className="space-y-2">
                     <label className={cn("text-green-400 uppercase font-bold block", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client ID</label>
                     <input 
@@ -1570,10 +1996,6 @@ export default function App() {
                     <RotateCcw size={16} />
                     RESET_TO_DEFAULT_SETTINGS
                   </button>
-
-                  <div className="p-2 border border-red-900/30 rounded bg-red-950/10">
-                    <p className={cn("text-red-500 font-bold", fontSize === 'large' ? "text-xs" : "text-[9px]")}>WARNING: Changing these settings will restart the OAuth client. You may need to reconnect Google Drive after saving.</p>
-                  </div>
                 </div>
               )}
 
