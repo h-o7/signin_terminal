@@ -4,6 +4,59 @@
   --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, monospace;
 }
 
+/* Custom Range Input (Slider) */
+input[type="range"].accent-green-500 {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+
+input[type="range"].accent-green-500::-webkit-slider-runnable-track {
+  background: rgba(22, 163, 74, 0.2);
+  border-radius: 9999px;
+  height: 6px;
+}
+
+input[type="range"].accent-green-500::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: #22c55e;
+  cursor: pointer;
+  border-radius: 50%;
+  border: 2px solid #064e3b;
+  margin-top: -4px; /* Centers thumb on track */
+  box-shadow: 0 0 10px rgba(34, 197, 94, 0.3);
+}
+
+input[type="range"].accent-green-500::-moz-range-track {
+  background: rgba(22, 163, 74, 0.2);
+  border-radius: 9999px;
+  height: 6px;
+}
+
+input[type="range"].accent-green-500::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: #22c55e;
+  cursor: pointer;
+  border-radius: 50%;
+  border: 2px solid #064e3b;
+  box-shadow: 0 0 10px rgba(34, 197, 94, 0.3);
+}
+
+/* Hide Number Input Arrows */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
 body {
   @apply bg-black text-white font-mono overflow-hidden;
 }

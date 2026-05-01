@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users, AlertTriangle, RotateCcw, Info } from 'lucide-react';
+import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users, AlertTriangle, RotateCcw, Info, Github } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -73,11 +73,57 @@ export default function App() {
   const [fontSize, setFontSize] = useState<'normal' | 'large'>(
     (localStorage.getItem('terminal_font_size') as 'normal' | 'large') || 'normal'
   );
+  const [dimTimeout, setDimTimeout] = useState<number>(
+    parseInt(localStorage.getItem('terminal_dim_timeout') || '0')
+  );
+  const [autoFullscreenEnabled, setAutoFullscreenEnabled] = useState<boolean>(
+    localStorage.getItem('terminal_auto_fullscreen') !== 'false'
+  );
+  const [paperSize, setPaperSize] = useState<'A4' | 'LETTER'>('LETTER');
+  const [isDimmed, setIsDimmed] = useState(false);
+  const lastActivityRef = useRef<number>(Date.now());
 
-  // Persist font size
+  // Dimmer logic
+  useEffect(() => {
+    if (dimTimeout <= 0) {
+      setIsDimmed(false);
+      return;
+    }
+
+    const handleActivity = () => {
+      lastActivityRef.current = Date.now();
+      if (isDimmed) setIsDimmed(false);
+    };
+
+    const events = ['mousedown', 'keydown', 'touchstart', 'mousemove', 'scroll'];
+    events.forEach(event => window.addEventListener(event, handleActivity, { passive: true }));
+
+    const checkInterval = setInterval(() => {
+      const inactiveTime = (Date.now() - lastActivityRef.current) / 1000;
+      if (inactiveTime >= dimTimeout && !isDimmed) {
+        setIsDimmed(true);
+      }
+    }, 1000);
+
+    return () => {
+      events.forEach(event => window.removeEventListener(event, handleActivity));
+      clearInterval(checkInterval);
+    };
+  }, [dimTimeout, isDimmed]);
+
+  // Persist settings
   useEffect(() => {
     localStorage.setItem('terminal_font_size', fontSize);
   }, [fontSize]);
+
+  useEffect(() => {
+    localStorage.setItem('terminal_dim_timeout', dimTimeout.toString());
+  }, [dimTimeout]);
+
+  useEffect(() => {
+    localStorage.setItem('terminal_auto_fullscreen', autoFullscreenEnabled.toString());
+  }, [autoFullscreenEnabled]);
+
   const [settingsTab, setSettingsTab] = useState<'general' | 'api'>('general');
   const [googleClientId, setGoogleClientId] = useState('');
   const [googleClientSecret, setGoogleClientSecret] = useState('');
@@ -136,7 +182,63 @@ export default function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Global Keyboard Listeners (Escape to close popups)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowSettings(false);
+        setShowReports(false);
+        setShowUserList(false);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
+
   const terminalId = user?.uid || 'shared-terminal';
+
+  // Auto-set start date to first entry when reports menu opens
+  useEffect(() => {
+    if (showReports && terminalId) {
+      const fetchFirstLog = async () => {
+        try {
+          const q = query(
+            collection(db, 'terminals', terminalId, 'logs'),
+            orderBy('timestamp', 'asc'),
+            limit(1)
+          );
+          const snapshot = await getDocs(q);
+          if (!snapshot.empty) {
+            const firstLog = snapshot.docs[0].data();
+            if (firstLog.timestamp) {
+              const firstDate = firstLog.timestamp.split('T')[0];
+              setReportStartDate(firstDate);
+            }
+          }
+        } catch (err) {
+          console.error('Failed to fetch first log for date initialization:', err);
+        }
+      };
+      fetchFirstLog();
+    }
+  }, [showReports, terminalId]);
+
+  // Keyboard Listeners
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (reportPreview) {
+          setReportPreview(null);
+        } else if (showReports) {
+          setShowReports(false);
+        } else if (showSettings) {
+          setShowSettings(false);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [reportPreview, showReports, showSettings]);
 
   // Auth Listener
   useEffect(() => {
@@ -397,6 +499,13 @@ export default function App() {
 
   const handleKeyDown = async (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && input.length > 0) {
+      // Trigger fullscreen on user action (browser requires user interaction) if enabled
+      if (autoFullscreenEnabled && !document.fullscreenElement && document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen().catch(() => {
+          console.log("Fullscreen request blocked or failed.");
+        });
+      }
+
       const userInput = input;
       setInput('');
 
@@ -1228,16 +1337,17 @@ export default function App() {
   return (
     <div className={cn(
       "h-screen bg-black text-green-500 font-mono flex flex-col p-4 relative transition-all duration-300 overflow-hidden",
-      fontSize === 'large' ? "text-lg" : "text-base"
+      fontSize === 'large' ? "text-lg" : "text-base",
+      reportPreview ? "print:h-auto print:overflow-visible print:bg-white" : ""
     )}>
       {/* Header */}
       <div className={cn(
-        "flex flex-wrap items-center justify-between border-b border-green-900 pb-2 mb-4 transition-all gap-y-4",
+        "flex flex-wrap items-center justify-between border-b border-green-900 pb-2 mb-4 transition-all gap-y-4 print:hidden",
         fontSize === 'large' ? "py-2" : ""
       )}>
         <div className="flex items-center gap-2">
           <TerminalIcon size={20} />
-          <span className="font-bold tracking-wider">CMD_TERMINAL_V2.2</span>
+          <span className="font-bold tracking-wider">CMD_TERMINAL_V2.3</span>
           <span className="text-[10px] bg-green-900/30 px-2 py-0.5 rounded text-green-400 animate-pulse">LIVE</span>
         </div>
         <div className="flex flex-wrap items-center gap-3 justify-end flex-1 min-w-0">
@@ -1277,7 +1387,7 @@ export default function App() {
       {/* Terminal Body */}
       <div 
         ref={scrollRef}
-        className="flex-1 overflow-hidden mb-4 space-y-1 px-6"
+        className="flex-1 overflow-hidden mb-4 space-y-1 px-6 print:hidden"
         onClick={() => inputRef.current?.focus()}
       >
         {logs.map((log) => (
@@ -1299,7 +1409,7 @@ export default function App() {
 
       {/* Input Area */}
       <div className={cn(
-        "flex items-center gap-2 border-t border-green-900 pt-4 px-6",
+        "flex items-center gap-2 border-t border-green-900 pt-4 px-6 print:hidden",
         fontSize === 'large' ? "py-2" : ""
       )}>
         <span className={cn("text-green-400 font-bold shrink-0", fontSize === 'large' ? "text-lg" : "text-base")}>SCAN_FOB_ID:</span>
@@ -1416,8 +1526,19 @@ export default function App() {
 
       {/* Report Preview Modal */}
       {reportPreview && (
-        <div className="absolute inset-0 bg-black z-[60] flex flex-col p-8 overflow-y-auto print:p-0 print:bg-white print:text-black">
-          <div className="max-w-5xl w-full mx-auto space-y-8 print:max-w-none">
+        <div className={cn(
+          "absolute inset-0 bg-black z-[60] flex flex-col p-8 overflow-y-auto shadow-2xl print:static print:bg-white print:text-black print:p-0 print:overflow-visible print:h-auto",
+          paperSize === 'A4' ? "print:a4-layout" : "print:letter-layout"
+        )}>
+          <style dangerouslySetInnerHTML={{ __html: `
+            @media print {
+              @page {
+                size: ${paperSize === 'A4' ? 'A4' : 'letter'};
+                margin: 20mm;
+              }
+            }
+          ` }} />
+          <div className="max-w-7xl w-full mx-auto space-y-8 print:max-w-none print:w-full print:mx-0">
             {/* Header - Hidden in Print if controlled */}
             <div className="flex items-center justify-between border-b border-green-500 pb-4 print:border-black">
               <div className="flex items-center gap-3">
@@ -1429,9 +1550,32 @@ export default function App() {
                   </p>
                 </div>
               </div>
-              <div className="flex gap-4 print:hidden">
-                <button 
-                  onClick={() => {
+              <div className="flex items-center gap-6 print:hidden">
+                {/* Paper Size selector */}
+                <div className="flex bg-green-900/20 border border-green-500/30 rounded p-1">
+                  <button 
+                    onClick={() => setPaperSize('A4')}
+                    className={cn(
+                      "px-4 py-1 text-xs font-bold uppercase transition-all rounded",
+                      paperSize === 'A4' ? "bg-green-500 text-black" : "text-green-500/50 hover:text-green-400"
+                    )}
+                  >
+                    A4
+                  </button>
+                  <button 
+                    onClick={() => setPaperSize('LETTER')}
+                    className={cn(
+                      "px-4 py-1 text-xs font-bold uppercase transition-all rounded",
+                      paperSize === 'LETTER' ? "bg-green-500 text-black" : "text-green-500/50 hover:text-green-400"
+                    )}
+                  >
+                    Letter
+                  </button>
+                </div>
+
+                <div className="flex gap-4">
+                  <button 
+                    onClick={() => {
                     const data = reportPreview.data;
                     
                     // Logic to pair login/logout
@@ -1496,6 +1640,7 @@ export default function App() {
                 </button>
               </div>
             </div>
+          </div>
 
             {/* List - 2 Column Layout (Paging logic) */}
             <div className="space-y-12">
@@ -1519,41 +1664,64 @@ export default function App() {
                 });
                 if (current) sessions.push(current);
 
-                const pageSize = 50;
+                const rowsPerCol = paperSize === 'A4' ? 28 : 26;
+                const pageSize = rowsPerCol * 2;
                 const pages = [];
                 for (let i = 0; i < sessions.length; i += pageSize) {
                   pages.push(sessions.slice(i, i + pageSize));
                 }
 
                 return pages.map((page, pIdx) => (
-                  <div key={pIdx} className="grid grid-cols-1 md:grid-cols-2 gap-x-12 print:break-after-page">
-                    <div className="space-y-1">
-                      <div className="flex justify-between border-b-2 border-green-500 pb-1 text-[10px] uppercase font-bold text-green-400">
-                        <span>Logged In</span>
-                      </div>
-                      {page.map((s, i) => s.login ? (
-                        <div key={i} className="flex justify-between border-b border-green-900/10 py-1 text-[10px] font-mono print:border-gray-200 print:text-black">
-                          <div className="flex gap-2">
-                            <span className="text-gray-500 w-16">{s.login.local_date.split('-').slice(1).join('-')}</span>
-                            <span className="text-gray-400 w-12">{s.login.local_time.split(':').slice(0,2).join(':')}</span>
-                            <span className="text-white print:text-black truncate w-24">{s.login.displayName}</span>
+                  <div key={pIdx} className="space-y-4 break-after-page print:block">
+                    <div className="grid grid-cols-2 gap-8 print:gap-12 print:w-full print:grid-cols-2">
+                      {[0, 1].map(colIdx => {
+                        const colStart = colIdx * (pageSize / 2);
+                        const colEnd = colStart + (pageSize / 2);
+                        const colData = page.slice(colStart, colEnd);
+                        
+                        if (colData.length === 0 && colIdx === 1) return null;
+
+                        return (
+                          <div key={colIdx} className="space-y-4 print:w-full print:space-y-2">
+                            <div className="border-b-2 border-green-500 pb-2 grid grid-cols-2 gap-4 text-[10px] uppercase font-bold text-green-400 print:border-black print:text-black print:pb-1">
+                              <span>Logged In</span>
+                              <span>Logged Out</span>
+                            </div>
+                            <div className="divide-y divide-green-900/10 print:divide-none">
+                              {colData.map((s, i) => (
+                                <div key={i} className="grid grid-cols-2 gap-2 py-1.5 text-[10px] font-mono print:py-1 print:border-none print:text-black">
+                                  {/* Login Column */}
+                                  <div className="truncate">
+                                    {s.login ? (
+                                      <div className="flex gap-2">
+                                        <span className="text-gray-500 w-12 shrink-0">{s.login.local_date.split('-').slice(1).join('-')}</span>
+                                        <span className="text-gray-400 w-10 shrink-0">{s.login.local_time.split(':').slice(0,2).join(':')}</span>
+                                        <span className="text-white print:text-black truncate uppercase font-bold">{s.login.displayName}</span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-gray-800/30 font-bold">--- NO_DATA ---</span>
+                                    )}
+                                  </div>
+                                  {/* Logout Column */}
+                                  <div className="truncate">
+                                    {s.logout ? (
+                                      <div className="flex gap-2 border-l border-green-900/20 pl-2 print:border-none print:pl-0">
+                                        <span className="text-gray-500 w-12 shrink-0">{s.logout.local_date.split('-').slice(1).join('-')}</span>
+                                        <span className="text-gray-400 w-10 shrink-0">{s.logout.local_time.split(':').slice(0,2).join(':')}</span>
+                                        <span className="text-white print:text-black truncate uppercase font-bold">{s.logout.displayName}</span>
+                                      </div>
+                                    ) : (
+                                      <div className="border-l border-green-900/20 pl-2 print:border-none print:pl-0">
+                                        <span className="text-gray-800/30 font-bold">--- ACTIVE ---</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                        </div>
-                      ) : <div key={i} className="h-6" />)}
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex justify-between border-b-2 border-amber-500 pb-1 text-[10px] uppercase font-bold text-amber-400">
-                        <span>Logged Out</span>
-                      </div>
-                      {page.map((s, i) => s.logout ? (
-                        <div key={i} className="flex justify-between border-b border-amber-900/10 py-1 text-[10px] font-mono print:border-gray-200 print:text-black">
-                          <div className="flex gap-2">
-                            <span className="text-gray-500 w-16">{s.logout.local_date.split('-').slice(1).join('-')}</span>
-                            <span className="text-gray-400 w-12">{s.logout.local_time.split(':').slice(0,2).join(':')}</span>
-                            <span className="text-white print:text-black truncate w-24">{s.logout.displayName}</span>
-                          </div>
-                        </div>
-                      ) : <div key={i} className="h-6" />)}
+                        );
+                      })}
                     </div>
                   </div>
                 ));
@@ -1563,15 +1731,15 @@ export default function App() {
             {/* Stats Section */}
             {reportPreview.stats && (
               <div className="mt-12 pt-8 border-t border-green-500 grid grid-cols-3 gap-8 print:border-black print:text-black">
-                <div className="bg-green-900/20 p-6 rounded print:bg-gray-50 print:border print:border-gray-200">
+                <div className="bg-green-900/20 p-6 rounded print:p-0 print:bg-transparent print:border-none">
                   <p className="text-green-500 text-xs font-bold uppercase mb-1 print:text-gray-600">Days Worked</p>
                   <p className="text-3xl font-bold text-white print:text-black">{reportPreview.stats.totalDays}</p>
                 </div>
-                <div className="bg-green-900/20 p-6 rounded print:bg-gray-50 print:border print:border-gray-200">
+                <div className="bg-green-900/20 p-6 rounded print:p-0 print:bg-transparent print:border-none">
                   <p className="text-green-500 text-xs font-bold uppercase mb-1 print:text-gray-600">Total Hours</p>
                   <p className="text-3xl font-bold text-white print:text-black">{reportPreview.stats.totalHours} <span className="text-sm font-normal text-green-400">HRS</span></p>
                 </div>
-                <div className="bg-green-900/20 p-6 rounded print:bg-gray-50 print:border print:border-gray-200">
+                <div className="bg-green-900/20 p-6 rounded print:p-0 print:bg-transparent print:border-none">
                   <p className="text-green-500 text-xs font-bold uppercase mb-1 print:text-gray-600">Avg Hours/Day</p>
                   <p className="text-3xl font-bold text-white print:text-black">{reportPreview.stats.avgHoursPerDay} <span className="text-sm font-normal text-green-400">HRS</span></p>
                 </div>
@@ -1700,6 +1868,24 @@ export default function App() {
         </div>
       )}
 
+      {/* Modals & Popups */}
+      {isDimmed && (
+        <div 
+          className="fixed inset-0 bg-black/70 z-[10000] flex flex-col items-center justify-center cursor-none animate-in fade-in duration-700"
+          onClick={() => setIsDimmed(false)}
+        >
+          <div className="space-y-4 text-center">
+            <Activity className="w-12 h-12 text-green-500/20 mx-auto animate-pulse" />
+            <div className="text-green-500/30 font-mono text-sm uppercase tracking-[0.3em] font-black select-none">
+              SYSTEM_IDLE_DIMMED
+            </div>
+            <div className="text-green-500/10 font-mono text-[10px] uppercase tracking-widest select-none">
+              MOVE_MOUSE_OR_PRESS_KEY_TO_RESUME
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Settings Modal */}
       {showSettings && (
         <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
@@ -1805,7 +1991,7 @@ export default function App() {
                     <div className="grid grid-cols-1 gap-2">
                       <button 
                         onClick={() => fileInputRef.current?.click()}
-                        className={cn("w-full flex items-center justify-center gap-2 py-3 border border-green-900 hover:bg-green-900/20 text-green-400 rounded transition-all", fontSize === 'large' ? "text-sm" : "text-xs")}
+                        className={cn("w-full flex items-center justify-center gap-2 py-3 bg-green-900/20 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}
                       >
                         <Upload size={18} />
                         IMPORT_USERS_VIA_CSV
@@ -1853,38 +2039,139 @@ export default function App() {
                         DISCONNECT_GOOGLE_DRIVE
                       </button>
                     )}
+
+                    <div className="p-3 border border-red-900/50 bg-red-950/20 rounded space-y-1">
+                      <p className={cn("text-red-400 font-bold uppercase flex items-center gap-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                        <AlertTriangle size={12} /> Troubleshooting:
+                      </p>
+                      <p className={cn("text-red-300 leading-relaxed italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                        If you encounter 404 errors during Google Drive authentication, ensure your "Standalone App URL" matches exactly where you are running the app (e.g. http://localhost:3000), or open the application in a new tab to bypass iframe restrictions.
+                      </p>
+                    </div>
+
+                    <div className="pt-2 border-t border-green-900/30 space-y-4">
+                      {/* Auto-Dim Settings - Single Row */}
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-3">
+                          <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1 shrink-0", fontSize === 'large' ? "text-sm" : "text-xs")}>
+                            <Activity size={12} /> Auto-Dim Timer
+                          </label>
+                          <input 
+                            type="range"
+                            min="0"
+                            max="3600"
+                            step="10"
+                            value={dimTimeout}
+                            onChange={(e) => setDimTimeout(parseInt(e.target.value))}
+                            className="flex-1 accent-green-500 h-1.5 bg-green-900/10 rounded-lg appearance-none cursor-pointer"
+                          />
+                          <div className="flex items-center gap-1 shrink-0">
+                            <input 
+                              type="number"
+                              min="0"
+                              max="3600"
+                              value={dimTimeout}
+                              onChange={(e) => {
+                                const val = Math.min(3600, Math.max(0, parseInt(e.target.value) || 0));
+                                setDimTimeout(val);
+                              }}
+                              className={cn("w-12 bg-black border border-green-900 p-1 text-green-400 rounded outline-none focus:border-green-500 text-right", fontSize === 'large' ? "text-sm" : "text-xs")}
+                            />
+                            <span className={cn("text-green-500 font-mono opacity-50", fontSize === 'large' ? "text-xs" : "text-[10px]")}>S</span>
+                          </div>
+                        </div>
+                        <p className={cn("text-green-400/60 italic text-center", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                          {dimTimeout === 0 
+                            ? "Auto-dimming is disabled." 
+                            : `Inactivity dim trigger: ${dimTimeout} seconds`
+                          }
+                        </p>
+                      </div>
+
+                      {/* Fullscreen Toggle */}
+                      <div className="pt-2 flex items-center justify-between border-t border-green-900/30 group/fullscreen relative">
+                        <div className="flex items-center gap-1.5">
+                          <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1", fontSize === 'large' ? "text-sm" : "text-xs")}>
+                            <Shield size={12} /> Auto Fullscreen
+                          </label>
+                          <div className="group/tip relative cursor-help">
+                            <Activity size={10} className="text-green-500/50 hover:text-green-400 transition-colors" />
+                            <div className="absolute bottom-full left-0 mb-2 w-48 px-2 py-1.5 bg-black border border-green-500 text-[10px] text-green-400 rounded shadow-2xl opacity-0 group-hover/tip:opacity-100 transition-opacity pointer-events-none z-30 leading-tight">
+                              When enabled, the terminal automatically enters fullscreen mode upon the first scan or interaction.
+                            </div>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => setAutoFullscreenEnabled(!autoFullscreenEnabled)}
+                          className={cn(
+                            "w-12 h-6 rounded-full relative transition-colors duration-300",
+                            autoFullscreenEnabled ? "bg-green-500" : "bg-green-900/70"
+                          )}
+                        >
+                          <div className={cn(
+                            "absolute top-1 left-1 w-4 h-4 rounded-full bg-black transition-transform duration-300",
+                            autoFullscreenEnabled && "translate-x-6"
+                          )} />
+                        </button>
+                      </div>
+
+                      <div className="flex justify-center flex-col items-center gap-2">
+                        <div className="group relative">
+                          <a 
+                            href="https://github.com/h-o7/signin_terminal" 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className={cn("flex items-center gap-2 text-green-500/60 hover:text-green-400 transition-colors font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}
+                          >
+                            <Github size={14} />
+                            VIEW_SOURCE_ON_GITHUB
+                          </a>
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-black border border-green-500 text-[10px] text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 whitespace-nowrap">
+                            For full documentation, please see Github Repository
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </>
               ) : (
                 <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-                  <div className="p-3 bg-blue-950/20 border border-blue-900/50 rounded space-y-3">
-                    <div>
-                      <p className="text-blue-400 text-[10px] font-bold uppercase">Standalone Executable Config</p>
-                      <p className={cn("text-blue-300 leading-relaxed", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                        Configure these settings to allow the application to use your own Google Cloud project. 
-                        Required for Cloud Run or external hosting (Default port: 3000).
+                  <div className="space-y-2">
+                    <div className="p-3 bg-blue-950/20 border border-blue-900/50 rounded space-y-2">
+                      <div>
+                        <p className="text-blue-400 text-[10px] font-bold uppercase">Standalone Executable Config</p>
+                        <p className={cn("text-blue-300 leading-relaxed", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                          Configure these settings to allow the application to use your own Google Cloud project. 
+                          Required for Cloud Run or external hosting (Default port: 3000).
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-blue-400 text-[10px] font-bold uppercase flex items-center gap-2">
+                          <Info size={12} /> Sync Protocol Note
+                        </p>
+                        <p className={cn("text-blue-300 leading-relaxed", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                          To ensure stability and performance, scan data is buffered locally and synchronized with the database every 10 seconds. 
+                          It is normal to experience a brief delay before entries appear in reports.
+                        </p>
+                      </div>
+                    </div>
+  
+                    <div className="p-3 bg-red-950/20 border border-red-900/50 rounded space-y-2">
+                      <p className="text-red-500 text-[10px] font-bold uppercase">Security Warning</p>
+                      <p className={cn("text-red-400 leading-relaxed", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                        Changing these settings will restart the OAuth client. You may need to reconnect Google Drive after saving.
                       </p>
                     </div>
-                    <div className="pt-2 border-t border-blue-900/30">
-                      <p className="text-blue-400 text-[10px] font-bold uppercase flex items-center gap-2">
-                        <Info size={12} /> Sync Protocol Note
-                      </p>
-                      <p className={cn("text-blue-300 leading-relaxed", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                        To ensure stability and performance, scan data is buffered locally and synchronized with the database every 10 seconds. 
-                        It is normal to experience a brief delay before entries appear in reports.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="p-3 bg-red-950/20 border border-red-900/50 rounded space-y-2">
-                    <p className="text-red-500 text-[10px] font-bold uppercase">Security Warning</p>
-                    <p className={cn("text-red-400 leading-relaxed", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                      Changing these settings will restart the OAuth client. You may need to reconnect Google Drive after saving.
-                    </p>
                   </div>
 
                   <div className="space-y-2">
-                    <label className={cn("text-green-400 uppercase font-bold block", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client ID</label>
+                    <div className="group relative flex items-center gap-1.5">
+                      <label className={cn("text-green-400 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client ID</label>
+                      <Info size={12} className="text-green-500/50 cursor-help" />
+                      <div className="absolute bottom-full left-0 mb-2 w-64 p-2 bg-black border border-green-500 text-[10px] text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 leading-relaxed">
+                        The OAuth 2.0 Client ID from your Google Cloud Console project. This identifies your application to Google's authentication server.
+                      </div>
+                    </div>
                     <input 
                       type="text"
                       value={googleClientId}
@@ -1895,7 +2182,13 @@ export default function App() {
                   </div>
 
                   <div className="space-y-2">
-                    <label className={cn("text-green-400 uppercase font-bold block", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client Secret</label>
+                    <div className="group relative flex items-center gap-1.5">
+                      <label className={cn("text-green-400 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client Secret</label>
+                      <Info size={12} className="text-green-500/50 cursor-help" />
+                      <div className="absolute bottom-full left-0 mb-2 w-64 p-2 bg-black border border-green-500 text-[10px] text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 leading-relaxed text-red-400">
+                        The OAuth 2.0 Client Secret from your Google Cloud Console. This is a private key that should be kept secure and never shared publicly.
+                      </div>
+                    </div>
                     <input 
                       type="password"
                       value={googleClientSecret}
@@ -1906,7 +2199,13 @@ export default function App() {
                   </div>
 
                   <div className="space-y-2">
-                    <label className={cn("text-green-400 uppercase font-bold block", fontSize === 'large' ? "text-sm" : "text-xs")}>Standalone App URL</label>
+                    <div className="group relative flex items-center gap-1.5">
+                      <label className={cn("text-green-400 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>Standalone App URL</label>
+                      <Info size={12} className="text-green-500/50 cursor-help" />
+                      <div className="absolute bottom-full left-0 mb-2 w-64 p-2 bg-black border border-green-500 text-[10px] text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 leading-relaxed">
+                        The exact URL where this terminal is running (e.g. http://localhost:3000). Google uses this to verify the redirect destination after login. Used to calculate the OAuth Redirect URI.
+                      </div>
+                    </div>
                     <input 
                       type="text"
                       value={appUrl}
@@ -1914,27 +2213,17 @@ export default function App() {
                       placeholder="e.g. http://localhost:3000"
                       className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 placeholder:text-green-600", fontSize === 'large' ? "text-base" : "text-sm")}
                     />
-                    <p className={cn("text-green-400 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Used to calculate the OAuth Redirect URI.</p>
                   </div>
 
                   <div className="space-y-4">
                     <div className="p-3 bg-indigo-950/20 border border-indigo-900/50 rounded space-y-2">
-                      <p className={cn("text-indigo-400 italic font-medium", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Add the Redirect URI to your Google Cloud Console Authorized Redirect URIs.</p>
+                      <p className={cn("text-indigo-400 font-medium", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Add the following OAuth Redirect URI to your Google Cloud Console Authorized Redirect URIs.</p>
                       <div>
                         <p className={cn("text-indigo-400 uppercase font-bold mb-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>OAuth Redirect URI:</p>
                         <code className={cn("text-indigo-300 break-all bg-black/50 p-2 block border border-indigo-900/40 rounded", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
                           {appUrl ? `${appUrl.replace(/\/$/, '')}/auth/callback` : `${window.location.origin}/auth/callback`}
                         </code>
                       </div>
-                    </div>
-                    
-                    <div className="p-3 border border-red-900/50 bg-red-950/20 rounded space-y-1">
-                      <p className={cn("text-red-400 font-bold uppercase flex items-center gap-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                        <AlertTriangle size={12} /> Troubleshooting:
-                      </p>
-                      <p className={cn("text-red-300 leading-relaxed italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                        If you encounter 404 errors during authentication, ensure your "Standalone App URL" matches exactly where you are running the app (e.g. http://localhost:3000), or open the application in a new tab to bypass iframe restrictions.
-                      </p>
                     </div>
                   </div>
 
@@ -1949,7 +2238,7 @@ export default function App() {
                       )}
                     >
                       {isSavingSettings ? <Activity className="animate-spin" size={14} /> : (showSaveConfirm ? <AlertTriangle size={16} /> : <Save size={16} />)}
-                      {fontSize === 'large' ? (isSavingSettings ? 'SAVING...' : (showSaveConfirm ? 'CONFIRM' : 'SAVE_CONFIG')) : (isSavingSettings ? 'SAVING...' : (showSaveConfirm ? 'CONFIRM' : 'SAVE_API'))}
+                      {isSavingSettings ? 'SAVING...' : (showSaveConfirm ? 'CONFIRM' : 'SAVE_API_SETTINGS')}
                     </button>
 
                     <button 
@@ -1960,7 +2249,7 @@ export default function App() {
                       )}
                     >
                       <RotateCcw size={16} />
-                      {fontSize === 'large' ? 'RESET_DEFAULTS' : 'RESET'}
+                      RESET_DEFAULTS
                     </button>
                   </div>
 
