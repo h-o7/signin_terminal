@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users, AlertTriangle, RotateCcw } from 'lucide-react';
+import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users, AlertTriangle, RotateCcw, Info } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -672,12 +672,6 @@ export default function App() {
 
   const handleGenerateReport = async () => {
     setIsGeneratingReport(true);
-    setLogs(prev => [...prev, { 
-      id: Date.now().toString(), 
-      timestamp: new Date(), 
-      message: `SYSTEM: Fetching logs for ${reportUser} from ${reportStartDate} to ${reportEndDate}...`, 
-      type: 'system' 
-    }]);
 
     try {
       // Helper to get UTC ISO string for a local time in the selected timezone
@@ -724,13 +718,6 @@ export default function App() {
 
       const startISO = getUtcBound(reportStartDate, '00:00:00.000');
       const endISO = getUtcBound(reportEndDate, '23:59:59.999');
-
-      setLogs(prev => [...prev, { 
-        id: Date.now().toString(), 
-        timestamp: new Date(), 
-        message: `SYSTEM: UTC range: ${startISO.split('.')[0]} to ${endISO.split('.')[0]}`,
-        type: 'system' 
-      }]);
 
       const q = query(
         collection(db, 'terminals', terminalId, 'logs'),
@@ -862,12 +849,6 @@ export default function App() {
       });
       setShowReports(false);
       
-      setLogs(prev => [...prev, { 
-        id: Date.now().toString(), 
-        timestamp: new Date(), 
-        message: `SYSTEM: Success! Report preview generated with ${data.length} records.`, 
-        type: 'system' 
-      }]);
     } catch (err: any) {
       console.error('Report error:', err);
       const errorMessage = err.message || 'Unknown error';
@@ -885,12 +866,6 @@ export default function App() {
 
   const handleExportAllAsZip = async () => {
     setIsExportingAll(true);
-    setLogs(prev => [...prev, { 
-      id: Date.now().toString(), 
-      timestamp: new Date(), 
-      message: `SYSTEM: Initializing full database export for period ${reportStartDate} to ${reportEndDate}...`, 
-      type: 'system' 
-    }]);
 
     try {
       // Helper for UTC bounds (copied from handleGenerateReport to ensure consistency)
@@ -1061,7 +1036,7 @@ export default function App() {
         };
 
         // Prepare CSV data with Login on Left, Logout on Right
-        const csvRows = sessions.map(s => ({
+        const csvRows: any[] = sessions.map(s => ({
           DATE_IN: s.login?.local_date || '',
           TIME_IN: s.login?.local_time || '',
           STATUS_IN: 'LOGGED IN',
@@ -1092,12 +1067,6 @@ export default function App() {
       const content = await zip.generateAsync({ type: 'blob' });
       saveAs(content, `${folderName}.zip`);
 
-      setLogs(prev => [...prev, { 
-        id: Date.now().toString(), 
-        timestamp: new Date(), 
-        message: `SYSTEM_EXPORT_SUCCESS: Generated ZIP with ${Object.keys(usersData).length} individual user files.`, 
-        type: 'system' 
-      }]);
     } catch (err: any) {
       console.error('ZIP Export error:', err);
       alert('ZIP Export failed: ' + err.message);
@@ -1484,7 +1453,7 @@ export default function App() {
                     });
                     if (current) sessions.push(current);
 
-                    const csvRows = sessions.map(s => ({
+                    const csvRows: any[] = sessions.map(s => ({
                       DATE_IN: s.login?.local_date || '',
                       TIME_IN: s.login?.local_time || '',
                       STATUS_IN: 'LOGGED IN',
@@ -1735,7 +1704,7 @@ export default function App() {
       {showSettings && (
         <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
           <div className={cn(
-            "max-w-xl w-full border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)]",
+            "max-w-xl w-full max-h-[90vh] overflow-y-auto border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)] scrollbar-green",
             fontSize === 'large' ? "scale-105" : ""
           )}>
             <div className="flex items-start justify-between border-b border-green-900 pb-4">
@@ -1884,38 +1853,27 @@ export default function App() {
                         DISCONNECT_GOOGLE_DRIVE
                       </button>
                     )}
-
-                    {!isGDriveConnected && (
-                      <div className="p-2 bg-blue-950/20 border border-blue-900/30 rounded space-y-2">
-                        <div>
-                          <p className={cn("text-blue-400 uppercase font-bold mb-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>OAuth Redirect URI:</p>
-                          <code className={cn("text-blue-300 break-all bg-black/50 p-1 block", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                            {appUrl ? `${appUrl.replace(/\/$/, '')}/auth/callback` : `${window.location.origin}/auth/callback`}
-                          </code>
-                        </div>
-                        
-                        <div className="p-2 border border-red-900/50 bg-red-950/20 rounded">
-                          <p className={cn("text-red-400 font-bold uppercase mb-1 flex items-center gap-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                            <AlertTriangle size={10} /> Troubleshooting:
-                          </p>
-                          <p className={cn("text-red-300 leading-tight italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                            If you encounter 404 errors during authentication, ensure your "Standalone App URL" in API_CONFIG matches exactly where you are running the app, or open the application in a new tab.
-                          </p>
-                        </div>
-                        
-                        <p className={cn("text-blue-400 mt-1 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Add the Redirect URI to your Google Cloud Console Authorized Redirect URIs.</p>
-                      </div>
-                    )}
                   </div>
                 </>
               ) : (
                 <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-                  <div className="p-3 bg-blue-950/20 border border-blue-900/50 rounded space-y-2">
-                    <p className="text-blue-400 text-[10px] font-bold uppercase">Standalone Executable Config</p>
-                    <p className={cn("text-blue-300 leading-relaxed", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                      Configure these settings to allow the application to use your own Google Cloud project. 
-                      This is required for standalone deployments.
-                    </p>
+                  <div className="p-3 bg-blue-950/20 border border-blue-900/50 rounded space-y-3">
+                    <div>
+                      <p className="text-blue-400 text-[10px] font-bold uppercase">Standalone Executable Config</p>
+                      <p className={cn("text-blue-300 leading-relaxed", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                        Configure these settings to allow the application to use your own Google Cloud project. 
+                        Required for Cloud Run or external hosting (Default port: 3000).
+                      </p>
+                    </div>
+                    <div className="pt-2 border-t border-blue-900/30">
+                      <p className="text-blue-400 text-[10px] font-bold uppercase flex items-center gap-2">
+                        <Info size={12} /> Sync Protocol Note
+                      </p>
+                      <p className={cn("text-blue-300 leading-relaxed", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                        To ensure stability and performance, scan data is buffered locally and synchronized with the database every 10 seconds. 
+                        It is normal to experience a brief delay before entries appear in reports.
+                      </p>
+                    </div>
                   </div>
 
                   <div className="p-3 bg-red-950/20 border border-red-900/50 rounded space-y-2">
@@ -1959,18 +1917,52 @@ export default function App() {
                     <p className={cn("text-green-400 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Used to calculate the OAuth Redirect URI.</p>
                   </div>
 
-                  <button 
-                    onClick={handleSaveApiSettings}
-                    disabled={isSavingSettings}
-                    className={cn(
-                      "w-full flex items-center justify-center gap-2 py-3 border rounded transition-all font-bold disabled:opacity-50",
-                      showSaveConfirm ? "bg-red-600 border-red-500 text-white hover:bg-red-500" : "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40",
-                      fontSize === 'large' ? "text-sm" : "text-xs"
-                    )}
-                  >
-                    {isSavingSettings ? <Activity className="animate-spin" size={14} /> : (showSaveConfirm ? <AlertTriangle size={16} /> : <Save size={16} />)}
-                    {isSavingSettings ? 'SAVING_CONFIG...' : (showSaveConfirm ? 'CONFIRM_SAVE_NEW_SETTINGS' : 'SAVE_API_CONFIG')}
-                  </button>
+                  <div className="space-y-4">
+                    <div className="p-3 bg-indigo-950/20 border border-indigo-900/50 rounded space-y-2">
+                      <p className={cn("text-indigo-400 italic font-medium", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Add the Redirect URI to your Google Cloud Console Authorized Redirect URIs.</p>
+                      <div>
+                        <p className={cn("text-indigo-400 uppercase font-bold mb-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>OAuth Redirect URI:</p>
+                        <code className={cn("text-indigo-300 break-all bg-black/50 p-2 block border border-indigo-900/40 rounded", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                          {appUrl ? `${appUrl.replace(/\/$/, '')}/auth/callback` : `${window.location.origin}/auth/callback`}
+                        </code>
+                      </div>
+                    </div>
+                    
+                    <div className="p-3 border border-red-900/50 bg-red-950/20 rounded space-y-1">
+                      <p className={cn("text-red-400 font-bold uppercase flex items-center gap-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                        <AlertTriangle size={12} /> Troubleshooting:
+                      </p>
+                      <p className={cn("text-red-300 leading-relaxed italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                        If you encounter 404 errors during authentication, ensure your "Standalone App URL" matches exactly where you are running the app (e.g. http://localhost:3000), or open the application in a new tab to bypass iframe restrictions.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button 
+                      onClick={handleSaveApiSettings}
+                      disabled={isSavingSettings}
+                      className={cn(
+                        "flex items-center justify-center gap-2 py-3 border rounded transition-all font-bold disabled:opacity-50",
+                        showSaveConfirm ? "bg-red-600 border-red-500 text-white hover:bg-red-500" : "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40",
+                        fontSize === 'large' ? "text-sm" : "text-xs"
+                      )}
+                    >
+                      {isSavingSettings ? <Activity className="animate-spin" size={14} /> : (showSaveConfirm ? <AlertTriangle size={16} /> : <Save size={16} />)}
+                      {fontSize === 'large' ? (isSavingSettings ? 'SAVING...' : (showSaveConfirm ? 'CONFIRM' : 'SAVE_CONFIG')) : (isSavingSettings ? 'SAVING...' : (showSaveConfirm ? 'CONFIRM' : 'SAVE_API'))}
+                    </button>
+
+                    <button 
+                      onClick={handleResetToDefaults}
+                      className={cn(
+                        "flex items-center justify-center gap-2 py-3 bg-gray-900/20 border border-gray-800 hover:bg-gray-800/40 text-gray-500 rounded transition-all font-bold",
+                        fontSize === 'large' ? "text-sm" : "text-xs"
+                      )}
+                    >
+                      <RotateCcw size={16} />
+                      {fontSize === 'large' ? 'RESET_DEFAULTS' : 'RESET'}
+                    </button>
+                  </div>
 
                   {showSaveConfirm && (
                     <div className="p-2 border border-red-600 bg-red-950/20 rounded">
@@ -1985,17 +1977,6 @@ export default function App() {
                       </button>
                     </div>
                   )}
-
-                  <button 
-                    onClick={handleResetToDefaults}
-                    className={cn(
-                      "w-full flex items-center justify-center gap-2 py-3 bg-gray-900/20 border border-gray-800 hover:bg-gray-800/40 text-gray-500 rounded transition-all font-bold",
-                      fontSize === 'large' ? "text-sm" : "text-xs"
-                    )}
-                  >
-                    <RotateCcw size={16} />
-                    RESET_TO_DEFAULT_SETTINGS
-                  </button>
                 </div>
               )}
 
