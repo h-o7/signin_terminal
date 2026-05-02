@@ -1328,6 +1328,16 @@ export default function App() {
               <div className="flex items-center gap-1"><Cpu size={12}/> CPU_READY</div>
               <div className="flex items-center gap-1"><Shield size={12}/> AUTH_BYPASS_ENABLED</div>
             </div>
+
+            <a 
+              href="https://github.com/h-o7/signin_terminal" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="mt-8 flex items-center gap-2 text-[10px] text-green-500 hover:text-green-400 transition-colors group"
+            >
+              <Github size={12} className="group-hover:animate-pulse" />
+              <span>TERMINAL_GITHUB_REPOSITORY</span>
+            </a>
           </div>
         </div>
       </div>
@@ -1378,7 +1388,16 @@ export default function App() {
               <button onClick={signOut} className={cn("border border-red-900 px-2 py-1 hover:bg-red-900/20 text-red-700 rounded font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}>LOGOUT</button>
             </div>
           ) : (
-            <button onClick={signIn} className={cn("bg-green-900/40 px-3 py-1 text-green-400 hover:bg-green-400 hover:text-black transition-colors rounded font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}>ADMIN_LOGIN</button>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setShowSettings(true)} 
+                className="p-1 hover:bg-green-900/30 rounded text-green-400"
+                title="Settings"
+              >
+                <Settings size={fontSize === 'large' ? 22 : 18} />
+              </button>
+              <button onClick={signIn} className={cn("bg-green-900/40 px-3 py-1 text-green-400 hover:bg-green-400 hover:text-black transition-colors rounded font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}>ADMIN_LOGIN</button>
+            </div>
           )}
           <button onClick={() => setIsStarted(false)} className={cn("border border-green-900 px-2 py-1 hover:bg-green-900/20 rounded font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}>EXIT</button>
         </div>
@@ -1911,8 +1930,9 @@ export default function App() {
                   </button>
                   <button 
                     onClick={() => setSettingsTab('api')}
+                    disabled={!user}
                     className={cn(
-                      "px-3 py-1 text-[10px] font-bold rounded transition-colors whitespace-nowrap",
+                      "px-3 py-1 text-[10px] font-bold rounded transition-colors whitespace-nowrap disabled:opacity-30 disabled:cursor-not-allowed",
                       settingsTab === 'api' ? "bg-green-500 text-black" : "text-green-500 hover:bg-green-900/30"
                     )}
                   >
@@ -1983,7 +2003,8 @@ export default function App() {
                       <label className={cn("text-green-400 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>User Management</label>
                       <button 
                         onClick={downloadCsvTemplate}
-                        className={cn("text-blue-500 hover:text-blue-400 font-bold transition-colors underline", fontSize === 'large' ? "text-xs" : "text-[10px]")}
+                        disabled={!user}
+                        className={cn("text-blue-500 hover:text-blue-400 font-bold transition-colors underline disabled:opacity-30", fontSize === 'large' ? "text-xs" : "text-[10px]")}
                       >
                         DOWNLOAD_TEMPLATE_CSV
                       </button>
@@ -1991,12 +2012,15 @@ export default function App() {
                     <div className="grid grid-cols-1 gap-2">
                       <button 
                         onClick={() => fileInputRef.current?.click()}
-                        className={cn("w-full flex items-center justify-center gap-2 py-3 bg-green-900/20 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}
+                        disabled={!user}
+                        className={cn("w-full flex items-center justify-center gap-2 py-3 bg-green-900/20 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
                       >
                         <Upload size={18} />
                         IMPORT_USERS_VIA_CSV
                       </button>
-                      <p className={cn("text-green-400 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>FOB_ID must be numbers and letters only (maximum 30 characters)</p>
+                      <p className={cn("text-green-400 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                        {!user ? "(ADMIN_LOGIN_REQUIRED_TO_IMPORT)" : "FOB_ID must be numbers and letters only (maximum 30 characters)"}
+                      </p>
                       <p className={cn("text-green-400 italic mt-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>To manually add users, scan or enter FOB_ID in the main terminal window and edit the DISPLAY_NAME in REGISTERED_USERS_DATABASE MENU</p>
                     </div>
                     <input 
@@ -2014,8 +2038,9 @@ export default function App() {
                       <label className={cn("text-green-400 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>Data Management</label>
                       <button 
                         onClick={handleExportToGoogleDrive}
+                        disabled={!user}
                         className={cn(
-                          "w-full flex items-center justify-center gap-3 px-4 py-3 border rounded transition-all font-bold text-center",
+                          "w-full flex items-center justify-center gap-3 px-4 py-3 border rounded transition-all font-bold text-center disabled:opacity-30 disabled:cursor-not-allowed",
                           fontSize === 'large' ? "text-sm" : "text-xs",
                           "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40"
                         )}
@@ -2023,9 +2048,9 @@ export default function App() {
                         <div className="flex flex-col items-center gap-0.5">
                           <div className="flex items-center gap-3">
                             <Cloud size={18} className="shrink-0" />
-                            <span className="truncate">{isGDriveConnected ? 'EXPORT_TO_CONNECTED_GOOGLE_DRIVE' : 'CONNECT_GOOGLE_DRIVE_AND_EXPORT_CSV'}</span>
+                            <span className="truncate">{!user ? "(ADMIN_LOGIN_REQUIRED)" : (isGDriveConnected ? 'EXPORT_TO_CONNECTED_GOOGLE_DRIVE' : 'CONNECT_GOOGLE_DRIVE_AND_EXPORT_CSV')}</span>
                           </div>
-                          {!isGDriveConnected && <span className="text-[10px] opacity-70 ml-7">(DOUBLE_CLICK)</span>}
+                          {user && !isGDriveConnected && <span className="text-[10px] opacity-70 ml-7">(DOUBLE_CLICK)</span>}
                         </div>
                       </button>
                     </div>
@@ -2033,7 +2058,8 @@ export default function App() {
                     {isGDriveConnected && (
                       <button 
                         onClick={handleDisconnectGoogleDrive}
-                        className={cn("w-full flex items-center justify-center gap-2 py-3 bg-red-900/10 border border-red-900/50 hover:bg-red-900/30 text-red-500 rounded transition-all font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}
+                        disabled={!user}
+                        className={cn("w-full flex items-center justify-center gap-2 py-3 bg-red-900/10 border border-red-900/50 hover:bg-red-900/30 text-red-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
                       >
                         <CloudOff size={16} />
                         DISCONNECT_GOOGLE_DRIVE
@@ -2280,14 +2306,14 @@ export default function App() {
                 </button>
                 <div className="flex-1 relative group">
                   <button 
-                    disabled={!isGDriveConnected}
+                    disabled={!isGDriveConnected || !user}
                     onClick={handleClearDatabase}
                     className={cn("w-full flex items-center justify-center gap-2 py-3 bg-red-900/20 border border-red-900 hover:bg-red-900/40 text-red-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
                   >
                     <Trash2 size={16} />
-                    CLEAR_DATABASE
+                    {!user ? "ADMIN_LOGIN_REQUIRED" : "CLEAR_DATABASE"}
                   </button>
-                  {!isGDriveConnected && (
+                  {!isGDriveConnected && user && (
                     <div className={cn("absolute bottom-full left-0 mb-2 w-48 p-2 bg-red-950 border border-red-900 text-red-400 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
                       SYSTEM_LOCKED: Google Drive must be connected for mandatory backup before clearing the database.
                     </div>
