@@ -10,11 +10,30 @@ export const googleProvider = new GoogleAuthProvider();
 
 export const signIn = async () => {
   try {
-    return await signInWithPopup(auth, googleProvider);
+    console.log("[AUTH] Starting Sign-in Popup...");
+    const result = await signInWithPopup(auth, googleProvider);
+    console.log("[AUTH] Sign-in Success:", result.user.email);
+    return result;
   } catch (error: any) {
+    console.error("[AUTH] Sign-in Error Details:", {
+      code: error.code,
+      message: error.message,
+      customData: error.customData,
+      email: error.customData?.email
+    });
+    
     if (error.code === 'auth/popup-closed-by-user') {
+      console.warn("[AUTH] Popup closed by user.");
       return null;
     }
+    
+    // Provide a more user-friendly alert for common Electron/Firebase issues
+    if (error.code === 'auth/unauthorized-domain') {
+       alert(`ERROR: Unauthorized Domain.\n\nYou must add the current origin to your Firebase Console under Authentication > Settings > Authorized Domains.\n\nCurrent Origin: ${window.location.origin}`);
+    } else {
+       alert(`AUTH_ERROR: ${error.code}\n${error.message}`);
+    }
+    
     throw error;
   }
 };

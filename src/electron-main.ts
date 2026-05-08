@@ -8,7 +8,20 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: false,
     },
+  });
+
+  // Open DevTools with Ctrl+Shift+I or F12 for debugging in the packaged app
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+      mainWindow.webContents.openDevTools();
+      event.preventDefault();
+    }
+    if (input.key === 'F12') {
+      mainWindow.webContents.openDevTools();
+      event.preventDefault();
+    }
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
