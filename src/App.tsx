@@ -1211,7 +1211,7 @@ export default function App() {
       const contentType = res.headers.get("content-type");
       
       if (!contentType || contentType.indexOf("application/json") === -1) {
-        throw new Error("BACKEND_UNAVAILABLE: This feature requires a Node.js backend. It will NOT work on Firebase Hosting (web.app). Please use the AI Studio Shared/Preview URL.");
+        throw new Error(`BACKEND_UNAVAILABLE: The local server at ${window.location.host} did not return a valid response. Please ensure your Google credentials are set in the Settings menu.`);
       }
 
       const { url } = await res.json();
