@@ -77,7 +77,7 @@ To enable Google Drive export features, you must configure your own Google Cloud
 5.  **Authorized redirect URIs**:
     -   Add `http://localhost:3000/auth/callback`
     -   Add `http://localhost:4000/auth/callback`
-    -   Add `https://your-app.web.app/auth/callback`
+    -   Add `https://your-app-url.com/auth/callback` (Replace with your actual public URL)
 6.  Click **Create** and copy your **Client ID** and **Client Secret**.
 
 ### 4. Configure the Application
