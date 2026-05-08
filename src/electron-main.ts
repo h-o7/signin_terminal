@@ -61,7 +61,7 @@ function createWindow() {
       
       expressApp.use(express.static(staticPath));
       
-      expressApp.get('*', (_req, res) => {
+      expressApp.get('*all', (_req, res) => {
         const indexPath = path.join(staticPath, 'index.html');
         res.sendFile(indexPath);
       });
