@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import express from 'express';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,18 +39,30 @@ function createWindow() {
       const expressApp = express();
       const PORT = 4000;
       
-      // Use app.getAppPath() to get the root of the app, works better in packaged apps
+      // Try to find the static files path more robustly
       const appPath = app.getAppPath();
-      const staticPath = path.join(appPath, '.vite/renderer/main_window');
+      const potentialPaths = [
+        path.join(appPath, '.vite/renderer/main_window'),
+        path.join(__dirname, '../renderer/main_window'),
+        path.join(process.cwd(), '.vite/renderer/main_window')
+      ];
+      
+      let staticPath = potentialPaths[0];
+      
+      for (const p of potentialPaths) {
+        if (fs.existsSync(p)) {
+          staticPath = p;
+          break;
+        }
+      }
       
       console.log(`[SERVER] App Path: ${appPath}`);
-      console.log(`[SERVER] Serving static files from: ${staticPath}`);
+      console.log(`[SERVER] Static Path Found: ${staticPath}`);
       
       expressApp.use(express.static(staticPath));
       
       expressApp.get('*', (_req, res) => {
         const indexPath = path.join(staticPath, 'index.html');
-        // Check if file exists before sending
         res.sendFile(indexPath);
       });
 
@@ -57,18 +70,30 @@ function createWindow() {
         console.log(`[SERVER] Local server running on http://localhost:${PORT}`);
       });
 
+      server.on('error', (e: any) => {
+        console.error('[SERVER] Server error:', e);
+        if (e.code === 'EADDRINUSE') {
+          console.log('[SERVER] Port in use, trying fallback...');
+          // In a real app, we might try another port, but 4000 is likely ok
+        }
+      });
+
       mainWindow.loadURL(`http://localhost:${PORT}`);
       
       mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
         console.error(`[SERVER] Failed to load URL: ${validatedURL} (${errorCode}: ${errorDescription})`);
         if (validatedURL.includes('localhost')) {
-          console.log('[SERVER] Falling back to file:// due to load failure');
-          mainWindow.loadFile(path.join(appPath, '.vite/renderer/main_window/index.html'));
+          const dialog = (import('electron')).then(({ dialog }) => {
+            dialog.showErrorBox('Local Server Error', `Failed to load app from localhost:4000.\nError: ${errorDescription}\nFalling back to file://`);
+          });
+          mainWindow.loadFile(path.join(staticPath, 'index.html'));
         }
       });
-    } catch (error) {
-      console.error('[SERVER] Failed to start local server, falling back to file://', error);
-      // Fallback relative to __dirname as a last resort
+    } catch (error: any) {
+      console.error('[SERVER] Failed to start local server:', error);
+      const dialog = (import('electron')).then(({ dialog }) => {
+         dialog.showErrorBox('Server Start Failure', error.message || String(error));
+      });
       mainWindow.loadFile(path.join(__dirname, '../renderer/main_window/index.html'));
     }
   }
