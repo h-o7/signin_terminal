@@ -13,8 +13,13 @@ module.exports = {
     {
       name: '@electron-forge/plugin-vite',
       config: {
-        // `build` steps for your main process
-        mainConfig: 'vite.main.config.ts',
+        build: [
+          {
+            // `build` steps for your main process
+            entry: 'src/electron-main.ts',
+            config: 'vite.main.config.ts',
+          },
+        ],
         // `build` steps for your renderer process
         renderer: [
           {
