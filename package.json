@@ -1,5 +1,6 @@
 {
   "name": "react-example",
+  "main": ".vite/build/main.js",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -12,7 +13,9 @@
     "firebase-deploy": "npm run build && firebase deploy",
     "preview": "vite preview",
     "clean": "rimraf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "package": "electron-forge package",
+    "make": "electron-forge make"
   },
   "dependencies": {
     "@electron-forge/cli": "^7.11.1",
@@ -27,6 +30,7 @@
     "cookie-parser": "^1.4.7",
     "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
+    "electron": "^42.0.0",
     "express": "^5.2.1",
     "file-saver": "^2.0.5",
     "firebase": "^12.11.0",
