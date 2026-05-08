@@ -1,4 +1,4 @@
-# Sign-in Terminal & User Management System
+# Terminal Logger
 
 A retro-styled terminal system for user check-ins with real-time feedback, CSV user imports, and Google Drive backup integration.
 
@@ -22,22 +22,21 @@ To import users in bulk:
 1.  Navigate to **SYSTEM_SETTINGS** (gear icon).
 2.  Go to the **GENERAL** tab.
 3.  Click **IMPORT_USERS_VIA_CSV**.
-4.  Your CSV should have at least one of these columns (headers are case-insensitive):
-    - `fob_id`: Numerical ID for scanning.
-    - `user_id`: Numerical ID for manual entry.
-    - `username`: Unique identifier.
-    - `display_name`: (Optional) Custom name shown in terminal.
+4.  Your CSV should have at least one of these columns (headers are case-insensitive and allow underscores/spaces):
+    - `fob_id` (or `fobid` / `card_id`): Numerical ID for scanning.
+    - `user_id` (or `id` / `username`): Primary identifier.
+    - `display_name` (or `name`): The name shown in the terminal.
 
 ## Packaging as an Executable (.exe)
 
 To convert this web application into a standalone Windows executable:
 
-### Option 1: Using `pkg` (Full-Stack bundle)
-This approach bundles the Node.js runtime and the server code.
+### Option 1: Using `pkg` (Full-Stack Headless Server)
+This approach bundles the Node.js runtime and the server code as a background service.
 1.  **Build the frontend**: `npm run build`
-2.  **Install pkg**: `npm install -g pkg`
-3.  **Package**: `pkg . --targets node18-win-x64 --output sign-in-terminal.exe`
-4.  **Note**: Ensure `dist/` folder and `settings.json` are in the same directory as the `.exe` when distributing.
+2.  **Compile the server**: Use a bundler like `esbuild` or `ncc` to create a single JS file from `server.ts`.
+3.  **Package**: `pkg server.js --targets node18-win-x64 --output logger-server.exe`
+4.  **Note**: Ensure the `dist/` folder and `settings.json` are in the same directory as the `.exe` when running.
 
 ### Option 2: Using Electron (Full Desktop App)
 The project is already configured with Electron Forge and Vite integration.
@@ -46,9 +45,10 @@ The project is already configured with Electron Forge and Vite integration.
 
 ## Project Configuration Files
 
--   **forge.config.js**: The main configuration for **Electron Forge**. It defines how the desktop application is packaged, what installers (makers) are generated, and manages the integration between Electron and Vite via plugins.
+-   **forge.config.cjs**: The main configuration for **Electron Forge**. It defines how the desktop application is packaged, what installers (makers) are generated, and manages the integration between Electron and Vite via plugins.
 -   **vite.main.config.ts**: Configures how the Electron **Main Process** (the background Node.js script) is bundled.
 -   **vite.renderer.config.ts**: Configures how the Electron **Renderer Process** (the React UI) is bundled.
+-   **vite.config.ts**: The standard Vite config used when running the web version (`npm run dev`).
 -   **src/electron-main.ts**: The entry point for the desktop application window management.
 
 ## Google Drive Setup Guide
@@ -99,4 +99,4 @@ To enable Google Drive export features, you must configure your own Google Cloud
 
 ## System Requirements
 - Node.js (v18+)
-- Firebase Project (configured in `src/firebase.ts`)
+- Firebase Project (configured via `firebase-applet-config.json`)

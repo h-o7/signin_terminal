@@ -589,8 +589,8 @@ export default function App() {
               return key ? row[key] : null;
             };
 
-            let username = getVal(['fobid', 'username', 'id', 'cardid', 'uid', 'user']);
-            const displayName = getVal(['displayname', 'name', 'fullname', 'userdesc']);
+            let username = getVal(['fobid', 'username', 'id', 'user_id', 'userid', 'cardid', 'uid', 'user']);
+            const displayName = getVal(['displayname', 'name', 'fullname', 'userdesc', 'display_name']);
             
             // Fallback: If no recognized header for ID, use the first column
             if (!username && Object.keys(row).length > 0) {
