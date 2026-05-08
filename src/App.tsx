@@ -130,6 +130,7 @@ export default function App() {
   const [googleClientId, setGoogleClientId] = useState('');
   const [googleClientSecret, setGoogleClientSecret] = useState('');
   const [appUrl, setAppUrl] = useState('');
+  const [originalApiSettings, setOriginalApiSettings] = useState<{googleClientId: string, googleClientSecret: string, appUrl: string} | null>(null);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<UserRecord[]>([]);
@@ -288,9 +289,15 @@ export default function App() {
           throw new Error('SERVER_RESPONSE_NOT_JSON: The server returned an invalid format. This often happens if the server crashed and returned an HTML error page.');
         })
         .then(data => {
-          setGoogleClientId(data.googleClientId || '');
-          setGoogleClientSecret(data.googleClientSecret || '');
-          setAppUrl(data.appUrl || window.location.origin);
+          const loadedSettings = {
+            googleClientId: data.googleClientId || '',
+            googleClientSecret: data.googleClientSecret || '',
+            appUrl: data.appUrl || window.location.origin
+          };
+          setGoogleClientId(loadedSettings.googleClientId);
+          setGoogleClientSecret(loadedSettings.googleClientSecret);
+          setAppUrl(loadedSettings.appUrl);
+          setOriginalApiSettings(loadedSettings);
         })
         .catch(err => {
           console.error('Failed to load settings:', err);
@@ -324,6 +331,11 @@ export default function App() {
       });
       if (res.ok) {
         alert('API Settings saved successfully. The server has been updated.');
+        setOriginalApiSettings({
+          googleClientId,
+          googleClientSecret,
+          appUrl
+        });
       } else {
         throw new Error('Failed to save settings');
       }
@@ -334,26 +346,14 @@ export default function App() {
     }
   };
 
-  const handleResetToDefaults = async () => {
-    if (!window.confirm('Are you sure you want to reset API settings to system defaults? This will erase custom Client ID and Secret.')) {
-      return;
-    }
+  const handleResetToDefaults = () => {
+    if (!originalApiSettings) return;
     
-    try {
-      const res = await fetch('/api/settings/defaults');
-      const defaults = await res.json();
-      
-      setGoogleClientId(defaults.googleClientId || '');
-      setGoogleClientSecret(defaults.googleClientSecret || '');
-      setAppUrl(defaults.appUrl || window.location.origin);
-      
-      // Also tell server to delete settings.json
-      await fetch('/api/settings/reset', { method: 'POST' });
-      
-      alert('Settings reset to defaults.');
-    } catch (err) {
-      console.error('Failed to reset settings:', err);
-    }
+    setGoogleClientId(originalApiSettings.googleClientId);
+    setGoogleClientSecret(originalApiSettings.googleClientSecret);
+    setAppUrl(originalApiSettings.appUrl);
+    
+    // No need to alert here, the fields will just snap back to previous values
   };
 
   // Listen for OAuth Success
@@ -2261,7 +2261,18 @@ export default function App() {
                       disabled={isSavingSettings}
                       className={cn(
                         "flex items-center justify-center gap-2 py-3 border rounded transition-all font-bold disabled:opacity-50",
-                        showSaveConfirm ? "bg-red-600 border-red-500 text-white hover:bg-red-500" : "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40",
+                        showSaveConfirm 
+                          ? "bg-red-600 border-red-500 text-white hover:bg-red-500" 
+                          : (() => {
+                              const hasChanges = originalApiSettings && (
+                                googleClientId !== originalApiSettings.googleClientId ||
+                                googleClientSecret !== originalApiSettings.googleClientSecret ||
+                                appUrl !== originalApiSettings.appUrl
+                              );
+                              return hasChanges 
+                                ? "bg-blue-600 border-blue-500 text-white hover:bg-blue-500 animate-pulse shadow-[0_0_15px_rgba(37,99,235,0.4)]" 
+                                : "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40";
+                            })(),
                         fontSize === 'large' ? "text-sm" : "text-xs"
                       )}
                     >
@@ -2271,6 +2282,7 @@ export default function App() {
 
                     <button 
                       onClick={handleResetToDefaults}
+                      title="REVERT_TO_LAST_SAVED_CONFIG: Undo any unsaved changes and restore the settings that were active when the app was launched or last saved."
                       className={cn(
                         "flex items-center justify-center gap-2 py-3 bg-gray-900/20 border border-gray-800 hover:bg-gray-800/40 text-gray-500 rounded transition-all font-bold",
                         fontSize === 'large' ? "text-sm" : "text-xs"
