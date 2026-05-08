@@ -35,26 +35,29 @@ function createWindow() {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
     try {
-      // In production, serve renderer files via localhost:4000 
-      // This is necessary because Firebase Auth doesn't support file:// origins
       const expressApp = express();
       const PORT = 4000;
+      
+      // In Electron Forge + Vite, the renderer files are in a specific location
+      // relative to the main process bundle.
       const staticPath = path.join(__dirname, '../renderer/main_window');
+      
+      console.log(`[SERVER] Serving static files from: ${staticPath}`);
       
       expressApp.use(express.static(staticPath));
       
-      // Handle SPA routing: redirect all requests to index.html
       expressApp.get('*', (_req, res) => {
-        res.sendFile(path.join(staticPath, 'index.html'));
+        const indexPath = path.join(staticPath, 'index.html');
+        res.sendFile(indexPath);
       });
 
       server = expressApp.listen(PORT, '127.0.0.1', () => {
-        console.log(`Local server running on http://localhost:${PORT}`);
+        console.log(`[SERVER] Local server running on http://localhost:${PORT}`);
       });
 
       mainWindow.loadURL(`http://localhost:${PORT}`);
     } catch (error) {
-      console.error('Failed to start local server, falling back to file://', error);
+      console.error('[SERVER] Failed to start local server, falling back to file://', error);
       mainWindow.loadFile(path.join(__dirname, '../renderer/main_window/index.html'));
     }
   }
