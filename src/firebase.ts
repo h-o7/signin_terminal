@@ -29,7 +29,7 @@ export const signIn = async () => {
     
     // Provide a more user-friendly alert for common Electron/Firebase issues
     if (error.code === 'auth/unauthorized-domain') {
-       alert(`ERROR: Unauthorized Domain.\n\nYou must add the current origin to your Firebase Console under Authentication > Settings > Authorized Domains.\n\nCurrent Origin: ${window.location.origin}`);
+       alert(`ERROR: Unauthorized Domain.\n\nTo fix this for Electron, you MUST add "http://localhost:4000" to your Firebase Console under Authentication > Settings > Authorized Domains.\n\nCurrent Origin: ${window.location.origin}`);
     } else {
        alert(`AUTH_ERROR: ${error.code}\n${error.message}`);
     }
