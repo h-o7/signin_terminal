@@ -81,6 +81,40 @@ export default function App() {
   const [autoFullscreenEnabled, setAutoFullscreenEnabled] = useState<boolean>(
     localStorage.getItem('terminal_auto_fullscreen') !== 'false'
   );
+  const [shutdownEnabled, setShutdownEnabled] = useState<boolean>(
+    localStorage.getItem('terminal_shutdown_enabled') === 'true'
+  );
+  const [shutdownDays, setShutdownDays] = useState<number[]>(() => {
+    const saved = localStorage.getItem('terminal_shutdown_days');
+    return saved ? JSON.parse(saved) : [1, 2, 3, 4, 5]; // Default Mon-Fri
+  });
+  const [shutdownTime, setShutdownTime] = useState<string>(
+    localStorage.getItem('terminal_shutdown_time') || '19:00'
+  );
+  const [isSystemShutdown, setIsSystemShutdown] = useState(false);
+
+  // MIGRATION: Force default to 7 PM if it was previously set to 5 PM (17:00) by a legacy version
+  useEffect(() => {
+    const savedTime = localStorage.getItem('terminal_shutdown_time');
+    const migrated = localStorage.getItem('terminal_shutdown_migrated_v2');
+    if (savedTime === '17:00' && !migrated) {
+      setShutdownTime('19:00');
+      localStorage.setItem('terminal_shutdown_time', '19:00');
+      localStorage.setItem('terminal_shutdown_migrated_v2', 'true');
+    }
+  }, []);
+
+  // Electron Auto-Close logic
+  useEffect(() => {
+    const isElectron = /electron/i.test(navigator.userAgent) || (window as any).process?.versions?.electron;
+    if (isSystemShutdown && isElectron && shutdownEnabled) {
+      const timer = setTimeout(() => {
+        window.close();
+      }, 5000); // Give user 5 seconds to see the shutdown screen
+      return () => clearTimeout(timer);
+    }
+  }, [isSystemShutdown, shutdownEnabled]);
+
   const [paperSize, setPaperSize] = useState<'A4' | 'LETTER'>('LETTER');
   const [isDimmed, setIsDimmed] = useState(false);
   const lastActivityRef = useRef<number>(Date.now());
@@ -113,6 +147,34 @@ export default function App() {
     };
   }, [dimTimeout, isDimmed]);
 
+  // AUTO SHUTDOWN Logic
+  useEffect(() => {
+    if (!shutdownEnabled) {
+      setIsSystemShutdown(false);
+      return;
+    }
+
+    const checkShutdown = () => {
+      const now = new Date();
+      const currentDay = now.getDay(); // 0 = Sunday, 6 = Saturday
+      const [h, m] = shutdownTime.split(':').map(Number);
+      
+      const shutdownDate = new Date(now);
+      shutdownDate.setHours(h, m, 0, 0);
+
+      // If today is a shutdown day and we are past the time
+      if (shutdownDays.includes(currentDay) && now >= shutdownDate) {
+        if (!isSystemShutdown) setIsSystemShutdown(true);
+      } else {
+        if (isSystemShutdown) setIsSystemShutdown(false);
+      }
+    };
+
+    checkShutdown();
+    const interval = setInterval(checkShutdown, 30000); // Check every 30s
+    return () => clearInterval(interval);
+  }, [shutdownEnabled, shutdownDays, shutdownTime, isSystemShutdown]);
+
   // Persist settings
   useEffect(() => {
     localStorage.setItem('terminal_font_size', fontSize);
@@ -125,6 +187,18 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('terminal_auto_fullscreen', autoFullscreenEnabled.toString());
   }, [autoFullscreenEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem('terminal_shutdown_enabled', shutdownEnabled.toString());
+  }, [shutdownEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem('terminal_shutdown_days', JSON.stringify(shutdownDays));
+  }, [shutdownDays]);
+
+  useEffect(() => {
+    localStorage.setItem('terminal_shutdown_time', shutdownTime);
+  }, [shutdownTime]);
 
   const [settingsTab, setSettingsTab] = useState<'general' | 'api'>('general');
   const [googleClientId, setGoogleClientId] = useState('');
@@ -1356,45 +1430,93 @@ export default function App() {
 
   return (
     <div className={cn(
-      "h-screen bg-black text-green-500 font-mono flex flex-col p-4 relative transition-all duration-300 overflow-hidden",
+      "h-[100dvh] bg-black text-green-500 font-mono flex flex-col p-3 sm:p-4 relative transition-all duration-300 overflow-hidden",
       fontSize === 'large' ? "text-lg" : "text-base",
       reportPreview ? "print:h-auto print:overflow-visible print:bg-white" : ""
     )}>
+      {/* Shutdown Overlay */}
+      {isSystemShutdown && (
+        <div className="fixed inset-0 z-[1000] bg-black text-red-500 font-mono flex flex-col items-center justify-center p-8 text-center overflow-hidden">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-red-900/10 via-black to-black animate-pulse" />
+          <AlertTriangle size={64} className="mb-6 animate-bounce" />
+          <h1 className="text-4xl font-black mb-2 tracking-tighter">SERVER_OFFLINE</h1>
+          <div className="w-64 h-2 bg-red-900/30 mb-8 overflow-hidden rounded-full">
+            <div className="h-full bg-red-600 animate-[pulse_1.5s_infinite]" style={{ width: '100%' }} />
+          </div>
+          <p className="text-xl mb-4 font-bold">SYSTEM_AUTO_SHUTDOWN_ACTIVE</p>
+          {/electron/i.test(navigator.userAgent) && (
+            <div className="mb-4 py-1 px-3 border border-red-500/30 bg-red-500/10 rounded text-[10px] animate-pulse">
+              [ELECTRON_PROTOCOL] REQUESTING_WINDOW_CLOSE_IN_5S...
+            </div>
+          )}
+          <p className="text-sm opacity-60 mb-8 max-w-md uppercase leading-relaxed">
+            TERMINAL_STATUS: PRESERVATION_MODE
+            <br />
+            Operations will resume during next scheduled window.
+          </p>
+          
+          <div className="flex flex-col items-center gap-4">
+            <div className="flex items-center gap-2 px-4 py-2 border border-red-900/50 bg-red-950/20 rounded text-red-400 text-xs font-bold uppercase shadow-[0_0_15px_rgba(239,68,68,0.1)]">
+              <Calendar size={14} /> Scheduled Shutdown: {shutdownTime}
+            </div>
+            
+            <button 
+              onClick={() => {
+                const pass = prompt('SYSTEM_OVERRIDE_REQUIRED: ENTER OVERRIDE KEY (default: "admin")');
+                if (pass === 'admin') {
+                  setShutdownEnabled(false);
+                  setIsSystemShutdown(false);
+                }
+              }}
+              className="mt-8 text-[10px] text-red-900 hover:text-red-500 transition-colors uppercase underline underline-offset-4 decoration-red-900/50"
+            >
+              initiate_emergency_override_protocol
+            </button>
+          </div>
+
+          <div className="absolute inset-0 pointer-events-none opacity-[0.03] z-50 bg-[url('https://grainy-gradients.vercel.app/noise.svg')]" />
+        </div>
+      )}
+
       {/* Header */}
       <div className={cn(
-        "flex flex-wrap items-center justify-between border-b border-green-900 pb-2 mb-4 transition-all gap-y-4 print:hidden",
+        "flex flex-col sm:flex-row sm:items-center justify-between border-b border-green-900 pb-2 mb-4 transition-all gap-3 print:hidden",
         fontSize === 'large' ? "py-2" : ""
       )}>
-        <div className="flex items-center gap-2">
-          <TerminalIcon size={20} />
-          <span className="font-bold tracking-wider">{TERMINAL_VERSION}</span>
-          <span className="text-[10px] bg-green-900/30 px-2 py-0.5 rounded text-green-400 animate-pulse">LIVE</span>
+        <div className="flex items-center justify-between sm:justify-start gap-2">
+          <div className="flex items-center gap-2">
+            <TerminalIcon size={18} className="sm:size-5" />
+            <span className="font-bold tracking-wider text-xs sm:text-base">{TERMINAL_VERSION}</span>
+            <span className="text-[10px] bg-green-900/30 px-2 py-0.5 rounded text-green-400 animate-pulse">LIVE</span>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-3 justify-end flex-1 min-w-0">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 justify-center sm:justify-end flex-1 min-w-0">
           {user ? (
-            <div className="flex flex-wrap items-center gap-2 justify-end">
-              <span className={cn("text-green-400 truncate max-w-[150px] sm:max-w-none", fontSize === 'large' ? "text-xs" : "text-[10px]")}>{user.email}</span>
-              <button 
-                onClick={() => setShowUserList(true)} 
-                className="p-1 hover:bg-green-900/30 rounded text-green-400"
-                title="Registered Users"
-              >
-                <Users size={fontSize === 'large' ? 22 : 18} />
-              </button>
-              <button 
-                onClick={() => setShowReports(true)} 
-                className="p-1 hover:bg-green-900/30 rounded text-green-400"
-                title="Generate Reports"
-              >
-                <FileSpreadsheet size={fontSize === 'large' ? 22 : 18} />
-              </button>
-              <button 
-                onClick={() => setShowSettings(true)} 
-                className="p-1 hover:bg-green-900/30 rounded text-green-400"
-                title="Settings"
-              >
-                <Settings size={fontSize === 'large' ? 22 : 18} />
-              </button>
+            <div className="flex items-center gap-2 flex-wrap justify-center sm:justify-end">
+              <span className={cn("text-green-400 truncate max-w-[120px] sm:max-w-none", fontSize === 'large' ? "text-xs" : "text-[10px]")}>{user.email}</span>
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={() => setShowUserList(true)} 
+                  className="p-1 hover:bg-green-900/30 rounded text-green-400"
+                  title="Registered Users"
+                >
+                  <Users size={fontSize === 'large' ? 22 : 18} />
+                </button>
+                <button 
+                  onClick={() => setShowReports(true)} 
+                  className="p-1 hover:bg-green-900/30 rounded text-green-400"
+                  title="Generate Reports"
+                >
+                  <FileSpreadsheet size={fontSize === 'large' ? 22 : 18} />
+                </button>
+                <button 
+                  onClick={() => setShowSettings(true)} 
+                  className="p-1 hover:bg-green-900/30 rounded text-green-400"
+                  title="Settings"
+                >
+                  <Settings size={fontSize === 'large' ? 22 : 18} />
+                </button>
+              </div>
               <button onClick={signOut} className={cn("border border-red-900 px-2 py-1 hover:bg-red-900/20 text-red-700 rounded font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}>LOGOUT</button>
             </div>
           ) : (
@@ -1409,14 +1531,14 @@ export default function App() {
               <button onClick={signIn} className={cn("bg-green-900/40 px-3 py-1 text-green-400 hover:bg-green-400 hover:text-black transition-colors rounded font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}>ADMIN_LOGIN</button>
             </div>
           )}
-          <button onClick={() => setIsStarted(false)} className={cn("border border-green-900 px-2 py-1 hover:bg-green-900/20 rounded font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}>EXIT</button>
+          <button onClick={() => setIsStarted(false)} className={cn("border border-green-900 px-2 py-1 hover:bg-green-900/20 rounded font-bold ml-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>EXIT</button>
         </div>
       </div>
 
       {/* Terminal Body */}
       <div 
         ref={scrollRef}
-        className="flex-1 overflow-hidden mb-4 space-y-1 px-6 print:hidden"
+        className="flex-1 overflow-y-auto scrollbar-green mb-4 space-y-1 px-4 sm:px-6 print:hidden"
         onClick={() => inputRef.current?.focus()}
       >
         {logs.map((log) => (
@@ -1919,10 +2041,10 @@ export default function App() {
       {showSettings && (
         <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
           <div className={cn(
-            "max-w-xl w-full max-h-[90vh] overflow-y-auto border border-green-500 bg-black p-6 space-y-6 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)] scrollbar-green",
-            fontSize === 'large' ? "scale-105" : ""
+            "max-w-[796px] w-full max-h-[95vh] overflow-y-auto overflow-x-hidden border border-green-500 bg-black p-4 space-y-3 rounded shadow-[0_0_20px_rgba(16,185,129,0.2)] scrollbar-green",
+            fontSize === 'large' ? "p-6 space-y-5" : ""
           )}>
-            <div className="flex items-start justify-between border-b border-green-900 pb-4">
+            <div className="flex items-start justify-between border-b border-green-900 pb-3">
               <div className="flex flex-wrap items-center gap-4 flex-1 min-w-0 pr-4">
                 <div className="flex items-center gap-2">
                   <Settings className="text-green-400" size={20} />
@@ -1969,14 +2091,21 @@ export default function App() {
               </button>
             </div>
 
-            <div className={cn("space-y-4", fontSize === 'large' ? "text-base" : "text-sm")}>
+            <div className={cn("space-y-3", fontSize === 'large' ? "text-base space-y-5" : "text-sm")}>
               {settingsTab === 'general' ? (
-                <>
+                <div className="space-y-3 animate-in fade-in slide-in-from-left-2 duration-200">
                   {/* 1. Timezone Settings */}
-                  <div className="space-y-2">
-                    <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1", fontSize === 'large' ? "text-sm" : "text-xs")}>
-                      <Calendar size={12} /> System Timezone
-                    </label>
+                  <div className="p-3 bg-green-950/10 border border-green-900/10 rounded space-y-2">
+                    <div className="flex items-center gap-2 group relative cursor-help">
+                      <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1 group-hover:text-green-300 transition-colors", fontSize === 'large' ? "text-sm" : "text-xs")}>
+                        <Calendar size={12} /> System Timezone
+                      </label>
+                      <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
+                      <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm border-l-4 border-l-green-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                        <p className="font-bold border-b border-green-900 pb-1 mb-1 text-green-500 uppercase">System_Clock_Protocol:</p>
+                        Affects timestamp conversion in generated reports.
+                      </div>
+                    </div>
                     <select 
                       value={selectedTimezone}
                       onChange={(e) => {
@@ -2004,94 +2133,118 @@ export default function App() {
                         </option>
                       </optgroup>
                     </select>
-                    <p className={cn("text-green-400 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>Affects timestamp conversion in generated reports.</p>
                   </div>
 
-                  {/* 2. Import Users */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <label className={cn("text-green-400 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>User Management</label>
-                      <button 
-                        onClick={downloadCsvTemplate}
-                        disabled={!user}
-                        className={cn("text-blue-500 hover:text-blue-400 font-bold transition-colors underline disabled:opacity-30", fontSize === 'large' ? "text-xs" : "text-[10px]")}
-                      >
-                        DOWNLOAD_TEMPLATE_CSV
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2">
-                      <button 
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={!user}
-                        className={cn("w-full flex items-center justify-center gap-2 py-3 bg-green-900/20 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
-                      >
-                        <Upload size={18} />
-                        IMPORT_USERS_VIA_CSV
-                      </button>
-                      <p className={cn("text-green-400 italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                        {!user ? "(ADMIN_LOGIN_REQUIRED_TO_IMPORT)" : "FOB_ID must be numbers and letters only (maximum 30 characters)"}
-                      </p>
-                      <p className={cn("text-green-400 italic mt-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>To manually add users, scan or enter FOB_ID in the main terminal window and edit the DISPLAY_NAME in REGISTERED_USERS_DATABASE MENU</p>
-                    </div>
-                    <input 
-                      ref={fileInputRef}
-                      type="file" 
-                      accept=".csv" 
-                      className="hidden" 
-                      onChange={handleImportCSV}
-                    />
-                  </div>
-
-                  {/* 3. Export Data */}
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <label className={cn("text-green-400 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>Data Management</label>
-                      <button 
-                        onClick={handleExportToGoogleDrive}
-                        disabled={!user}
-                        className={cn(
-                          "w-full flex items-center justify-center gap-3 px-4 py-3 border rounded transition-all font-bold text-center disabled:opacity-30 disabled:cursor-not-allowed",
-                          fontSize === 'large' ? "text-sm" : "text-xs",
-                          "bg-blue-900/20 border-blue-900 text-blue-400 hover:bg-blue-900/40"
-                        )}
-                      >
-                        <div className="flex flex-col items-center gap-0.5">
-                          <div className="flex items-center gap-3">
-                            <Cloud size={18} className="shrink-0" />
-                            <span className="truncate">{!user ? "(ADMIN_LOGIN_REQUIRED)" : (isGDriveConnected ? 'EXPORT_TO_CONNECTED_GOOGLE_DRIVE' : 'CONNECT_GOOGLE_DRIVE_AND_EXPORT_CSV')}</span>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
+                    {/* 2. User Management */}
+                    <div className="p-3 bg-green-950/10 border border-green-900/10 rounded space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 group relative cursor-help">
+                          <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1 group-hover:text-green-300 transition-colors", fontSize === 'large' ? "text-sm" : "text-xs")}>
+                            <Users size={14} /> User Mgmt
+                          </label>
+                          <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
+                          <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm border-l-4 border-l-green-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                            <p className="font-bold border-b border-green-900 pb-1 mb-2 text-green-500 uppercase">IMPORT_PROTOCOL:</p>
+                            <ul className="list-disc pl-4 space-y-1">
+                              <li>FOB_ID: Alphanumeric characters only.</li>
+                              <li>Capacity: MAX_30_CHARACTERS.</li>
+                              <li>Manual Add: Scan/Enter FOB_ID in terminal then edit name in database menu.</li>
+                              {!user && <li className="text-red-500 font-black">ADMIN_LOGIN_REQUIRED_FOR_DATABASE_OPERATIONS</li>}
+                            </ul>
                           </div>
-                          {user && !isGDriveConnected && <span className="text-[10px] opacity-70 ml-7">(DOUBLE_CLICK)</span>}
                         </div>
-                      </button>
+                        <button 
+                          onClick={downloadCsvTemplate}
+                          disabled={!user}
+                          className={cn("text-blue-500 hover:text-blue-400 font-bold transition-colors underline disabled:opacity-30", fontSize === 'large' ? "text-[11px]" : "text-[9px]")}
+                        >
+                          DOWNLOAD_TEMPLATE_CSV
+                        </button>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <button 
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={!user}
+                          className={cn("w-full flex items-center justify-center gap-2 py-2.5 bg-green-900/20 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
+                        >
+                          <Upload size={16} className="hidden sm:block shrink-0" />
+                          <span className="truncate uppercase">IMPORT_USERS_VIA_CSV</span>
+                        </button>
+                        <input 
+                          type="file"
+                          ref={fileInputRef}
+                          onChange={handleImportCSV}
+                          className="hidden"
+                          accept=".csv"
+                        />
+                      </div>
                     </div>
-                    
-                    {isGDriveConnected && (
-                      <button 
-                        onClick={handleDisconnectGoogleDrive}
-                        disabled={!user}
-                        className={cn("w-full flex items-center justify-center gap-2 py-3 bg-red-900/10 border border-red-900/50 hover:bg-red-900/30 text-red-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
-                      >
-                        <CloudOff size={16} />
-                        DISCONNECT_GOOGLE_DRIVE
-                      </button>
-                    )}
 
-                    <div className="p-3 border border-red-900/50 bg-red-950/20 rounded space-y-1">
-                      <p className={cn("text-red-400 font-bold uppercase flex items-center gap-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                        <AlertTriangle size={12} /> Troubleshooting:
-                      </p>
-                      <p className={cn("text-red-300 leading-relaxed italic", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                        If you encounter 404 errors during Google Drive authentication, ensure your "Standalone App URL" matches exactly where you are running the app (e.g. http://localhost:3000), or open the application in a new tab to bypass iframe restrictions.
-                      </p>
+                    {/* 3. Data Management */}
+                    <div className="p-3 bg-green-950/10 border border-green-900/10 rounded space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 group relative cursor-help">
+                          <label className={cn("text-green-400 uppercase font-bold group-hover:text-green-300 transition-colors", fontSize === 'large' ? "text-sm" : "text-xs")}>Data Mgmt</label>
+                          <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
+                          <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm border-l-4 border-l-green-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                            <p className="font-bold border-b border-green-900 pb-1 mb-1 text-green-500 uppercase">Archive_Protocol:</p>
+                            Secure your terminal data by exporting to Google Drive. This allows for cloud synchronization and persistent storage of system logs and user records across different hardware instances.
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-2 group relative cursor-help">
+                          <AlertTriangle size={14} className="text-red-500" />
+                          <span className={cn("text-red-400 font-bold uppercase tracking-widest", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                            Auth
+                          </span>
+                          <div className="absolute top-full right-0 mt-2 w-80 p-3 bg-black/95 border border-red-900 text-red-300 rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono backdrop-blur-sm shadow-[0_0_20px_rgba(239,68,68,0.1)] border-r-4 border-r-red-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                            <div className="text-red-500 font-bold mb-1 border-b border-red-900/50 pb-1 uppercase">Iframe_Restriction_Protocol:</div>
+                            If you encounter 404 errors during Google Drive authentication, ensure your "Standalone App URL" matches exactly where you are running the app (e.g. http://localhost:3000), or open the application in a new tab to bypass iframe restrictions.
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <button 
+                          onClick={handleExportToGoogleDrive}
+                          disabled={!user}
+                          className={cn(
+                            "w-full flex items-center justify-center gap-2 py-2.5 bg-blue-900/20 border border-blue-900 text-blue-400 hover:bg-blue-900/40 rounded transition-all font-bold text-center disabled:opacity-30 disabled:cursor-not-allowed",
+                            fontSize === 'large' ? "text-sm" : "text-xs"
+                          )}
+                        >
+                          <Cloud size={16} className="shrink-0 hidden sm:block" />
+                          <span className="truncate uppercase tracking-tight">{!user ? "(Auth Req)" : (isGDriveConnected ? 'EXPORT_TO_GDRIVE' : 'CONNECT_GDRIVE_&_EXPORT')}</span>
+                        </button>
+                        
+                        {isGDriveConnected && (
+                          <button 
+                            onClick={handleDisconnectGoogleDrive}
+                            disabled={!user}
+                            className={cn("w-full flex items-center justify-center gap-2 py-2 bg-red-900/10 border border-red-900/50 hover:bg-red-900/30 text-red-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
+                          >
+                            <CloudOff size={14} className="hidden sm:block shrink-0" />
+                            <span className="uppercase tracking-tight">DISCONNECT_GDRIVE</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
+                  </div>
 
-                    <div className="pt-2 border-t border-green-900/30 space-y-4">
+                  <div className="p-3 bg-green-950/5 border border-green-900/10 rounded space-y-3">
                       {/* Auto-Dim Settings - Single Row */}
                       <div className="space-y-1">
-                        <div className="flex items-center gap-3">
-                          <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1 shrink-0", fontSize === 'large' ? "text-sm" : "text-xs")}>
-                            <Activity size={12} /> Auto-Dim Timer
-                          </label>
+                        <div className="flex items-center gap-3 group relative cursor-help">
+                          <div className="flex items-center gap-2">
+                            <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1 shrink-0 cursor-help group-hover:text-green-300 transition-colors", fontSize === 'large' ? "text-sm" : "text-xs")}>
+                              <Activity size={12} /> Auto-Dim Timer
+                            </label>
+                            <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
+                          </div>
+                          <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm border-l-4 border-l-green-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                            <p className="font-bold border-b border-green-900 pb-1 mb-1 text-green-500 uppercase">Energy_Protocol:</p>
+                            Energy saving protocol. Terminal dims after specified inactive seconds (0 = disabled) to preserve display life and resources.
+                          </div>
                           <input 
                             type="range"
                             min="0"
@@ -2099,7 +2252,7 @@ export default function App() {
                             step="10"
                             value={dimTimeout}
                             onChange={(e) => setDimTimeout(parseInt(e.target.value))}
-                            className="flex-1 accent-green-500 h-1.5 bg-green-900/10 rounded-lg appearance-none cursor-pointer"
+                            className="flex-1 accent-green-500 h-1 bg-green-900/20 rounded-lg appearance-none cursor-pointer"
                           />
                           <div className="flex items-center gap-1 shrink-0">
                             <input 
@@ -2111,65 +2264,131 @@ export default function App() {
                                 const val = Math.min(3600, Math.max(0, parseInt(e.target.value) || 0));
                                 setDimTimeout(val);
                               }}
-                              className={cn("w-12 bg-black border border-green-900 p-1 text-green-400 rounded outline-none focus:border-green-500 text-right", fontSize === 'large' ? "text-sm" : "text-xs")}
+                              className={cn("w-14 bg-black border border-green-900/50 p-1 text-green-400 rounded outline-none focus:border-green-500 text-right", fontSize === 'large' ? "text-sm" : "text-xs")}
                             />
                             <span className={cn("text-green-500 font-mono opacity-50", fontSize === 'large' ? "text-xs" : "text-[10px]")}>S</span>
                           </div>
                         </div>
-                        <p className={cn("text-green-400/60 italic text-center", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                          {dimTimeout === 0 
-                            ? "Auto-dimming is disabled." 
-                            : `Inactivity dim trigger: ${dimTimeout} seconds`
-                          }
-                        </p>
                       </div>
 
-                      {/* Fullscreen Toggle */}
-                      <div className="pt-2 flex items-center justify-between border-t border-green-900/30 group/fullscreen relative">
-                        <div className="flex items-center gap-1.5">
-                          <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1", fontSize === 'large' ? "text-sm" : "text-xs")}>
+                      <div className="pt-2 flex items-center justify-between border-t border-green-900/10">
+                        <div className="flex items-center gap-2 group relative cursor-help">
+                          <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1 cursor-help group-hover:text-green-300 transition-colors", fontSize === 'large' ? "text-sm" : "text-xs")}>
                             <Shield size={12} /> Auto Fullscreen
                           </label>
-                          <div className="group/tip relative cursor-help">
-                            <Activity size={10} className="text-green-500/50 hover:text-green-400 transition-colors" />
-                            <div className="absolute bottom-full left-0 mb-2 w-48 px-2 py-1.5 bg-black border border-green-500 text-[10px] text-green-400 rounded shadow-2xl opacity-0 group-hover/tip:opacity-100 transition-opacity pointer-events-none z-30 leading-tight">
-                              When enabled, the terminal automatically enters fullscreen mode upon the first scan or interaction.
-                            </div>
+                          <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
+                          <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm border-l-4 border-l-green-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                            <p className="font-bold border-b border-green-900 pb-1 mb-1 text-green-500 uppercase">UI_Protocol:</p>
+                            When enabled, the terminal automatically enters fullscreen mode upon the first scan or interaction.
                           </div>
                         </div>
                         <button 
                           onClick={() => setAutoFullscreenEnabled(!autoFullscreenEnabled)}
                           className={cn(
-                            "w-12 h-6 rounded-full relative transition-colors duration-300",
+                            "w-10 h-5 rounded-full relative transition-colors duration-300",
                             autoFullscreenEnabled ? "bg-green-500" : "bg-green-900/70"
                           )}
                         >
                           <div className={cn(
-                            "absolute top-1 left-1 w-4 h-4 rounded-full bg-black transition-transform duration-300",
-                            autoFullscreenEnabled && "translate-x-6"
+                            "absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-black transition-transform duration-300",
+                            autoFullscreenEnabled && "translate-x-5"
                           )} />
                         </button>
                       </div>
 
-                      <div className="flex justify-center flex-col items-center gap-2">
-                        <div className="group relative">
-                          <a 
-                            href="https://github.com/h-o7/signin_terminal" 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className={cn("flex items-center gap-2 text-green-500/60 hover:text-green-400 transition-colors font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}
+                      <div className="pt-2 border-t border-green-900/10 space-y-3">
+                        <div className="flex items-center justify-between group relative cursor-help">
+                          <div className="flex items-center gap-2">
+                            <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1 cursor-help group-hover:text-green-300 transition-colors", fontSize === 'large' ? "text-sm" : "text-xs")}>
+                              <Cpu size={12} /> Auto Shutdown
+                            </label>
+                            <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
+                          </div>
+                          <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm border-l-4 border-l-green-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                            <p className="font-bold border-b border-green-900 pb-1 mb-1 text-green-500 uppercase">Power_Protocol:</p>
+                            Automatically enters "OFFLINE" mode on selected days at the specified time to preserve system resources and enforce curfew.
+                          </div>
+                          <button 
+                            onClick={() => setShutdownEnabled(!shutdownEnabled)}
+                            className={cn(
+                              "px-2 py-0.5 rounded text-[10px] font-bold transition-colors border",
+                              shutdownEnabled ? "bg-green-500 border-green-400 text-black" : "bg-gray-900/40 border-gray-800 text-gray-500"
+                            )}
                           >
-                            <Github size={14} />
-                            VIEW_SOURCE_ON_GITHUB
-                          </a>
-                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-black border border-green-500 text-[10px] text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 whitespace-nowrap">
-                            For full documentation, please see Github Repository
+                            {shutdownEnabled ? 'ENABLED' : 'DISABLED'}
+                          </button>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-4">
+                          <div className="flex gap-1 bg-black/40 p-1 rounded border border-green-900/30">
+                            {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, idx) => (
+                              <button
+                                key={idx}
+                                title={['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][idx]}
+                                onClick={() => {
+                                  if (shutdownDays.includes(idx)) {
+                                    setShutdownDays(shutdownDays.filter(d => d !== idx));
+                                  } else {
+                                    setShutdownDays([...shutdownDays, idx].sort());
+                                  }
+                                }}
+                                className={cn(
+                                  "w-6 h-6 flex items-center justify-center rounded text-[10px] font-bold border transition-all",
+                                  shutdownDays.includes(idx) 
+                                    ? "bg-green-500 border-green-400 text-black" 
+                                    : "bg-black border-green-900/50 text-green-900 hover:border-green-700 hover:text-green-700"
+                                )}
+                              >
+                                {day}
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <label className="text-[9px] text-green-900 font-bold uppercase ml-1">Time (24h)</label>
+                            <input 
+                              type="text"
+                              value={shutdownTime}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                // Simple pattern check for HH:mm
+                                if (/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(val) || val === "" || /^[0-2]$/.test(val) || /^[0-2][0-9]:?$/.test(val)) {
+                                  setShutdownTime(val);
+                                }
+                              }}
+                              onBlur={() => {
+                                // Basic validation/formatting on blur
+                                const parts = shutdownTime.split(':');
+                                if (parts.length === 2) {
+                                  let h = parseInt(parts[0]) || 0;
+                                  let m = parseInt(parts[1]) || 0;
+                                  h = Math.min(23, Math.max(0, h));
+                                  m = Math.min(59, Math.max(0, m));
+                                  setShutdownTime(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
+                                } else {
+                                  setShutdownTime('19:00'); // Fallback
+                                }
+                              }}
+                              placeholder="HH:mm"
+                              className="bg-black border border-green-900/50 rounded p-1 text-green-400 text-[10px] outline-none focus:border-green-500 px-2 font-bold w-16 text-center"
+                            />
                           </div>
                         </div>
                       </div>
-                    </div>
                   </div>
-                </>
+
+                  <div className="flex justify-center">
+                    <a 
+                      href="https://github.com/h-o7/signin_terminal" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className={cn("flex items-center gap-2 text-green-500/40 hover:text-green-400 transition-colors font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}
+                    >
+                      <Github size={12} />
+                      VIEW_SOURCE
+                    </a>
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
                   <div className="space-y-2">
@@ -2201,10 +2420,11 @@ export default function App() {
                   </div>
 
                   <div className="space-y-2">
-                    <div className="group relative flex items-center gap-1.5">
-                      <label className={cn("text-green-400 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client ID</label>
-                      <Info size={12} className="text-green-500/50 cursor-help" />
-                      <div className="absolute bottom-full left-0 mb-2 w-64 p-2 bg-black border border-green-500 text-[10px] text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 leading-relaxed">
+                    <div className="group relative flex items-center gap-2 cursor-help">
+                      <label className={cn("text-green-400 uppercase font-bold group-hover:text-green-300 transition-colors", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client ID</label>
+                      <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
+                      <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed border-l-4 border-l-green-600 font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                        <p className="font-bold border-b border-green-900 pb-1 mb-1 text-green-500 uppercase">OAuth_Protocol_ID:</p>
                         The OAuth 2.0 Client ID from your Google Cloud Console project. This identifies your application to Google's authentication server.
                       </div>
                     </div>
@@ -2218,10 +2438,11 @@ export default function App() {
                   </div>
 
                   <div className="space-y-2">
-                    <div className="group relative flex items-center gap-1.5">
-                      <label className={cn("text-green-400 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client Secret</label>
-                      <Info size={12} className="text-green-500/50 cursor-help" />
-                      <div className="absolute bottom-full left-0 mb-2 w-64 p-2 bg-black border border-green-500 text-[10px] text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 leading-relaxed text-red-400">
+                    <div className="group relative flex items-center gap-2 cursor-help">
+                      <label className={cn("text-green-400 uppercase font-bold group-hover:text-green-300 transition-colors", fontSize === 'large' ? "text-sm" : "text-xs")}>Google Client Secret</label>
+                      <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
+                      <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-red-900 text-red-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed border-l-4 border-l-red-600 font-mono shadow-[0_0_20px_rgba(239,68,68,0.1)] backdrop-blur-sm" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                        <p className="font-bold border-b border-red-900/50 pb-1 mb-1 text-red-500 uppercase">Security_Key_Protocol:</p>
                         The OAuth 2.0 Client Secret from your Google Cloud Console. This is a private key that should be kept secure and never shared publicly.
                       </div>
                     </div>
@@ -2235,10 +2456,11 @@ export default function App() {
                   </div>
 
                   <div className="space-y-2">
-                    <div className="group relative flex items-center gap-1.5">
-                      <label className={cn("text-green-400 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>Standalone App URL</label>
-                      <Info size={12} className="text-green-500/50 cursor-help" />
-                      <div className="absolute bottom-full left-0 mb-2 w-64 p-2 bg-black border border-green-500 text-[10px] text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 leading-relaxed">
+                    <div className="group relative flex items-center gap-2 cursor-help">
+                      <label className={cn("text-green-400 uppercase font-bold group-hover:text-green-300 transition-colors", fontSize === 'large' ? "text-sm" : "text-xs")}>Standalone App URL</label>
+                      <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
+                      <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed border-l-4 border-l-green-600 font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                        <p className="font-bold border-b border-green-900 pb-1 mb-1 text-green-500 uppercase">Routing_Protocol:</p>
                         The public URL of this app. In AI Studio, leave this BLANK to use the current URL automatically. If testing locally or via Electron, set to http://localhost:3000 (or http://localhost:4000 for Electron).
                       </div>
                     </div>
@@ -2318,7 +2540,7 @@ export default function App() {
               )}
 
               {/* 4. Bottom Buttons */}
-              <div className="pt-4 border-t border-green-900 flex gap-2">
+              <div className="pt-3 border-t border-green-900 flex gap-2">
                 <button 
                   onClick={() => setShowSettings(false)}
                   className={cn("flex-1 flex items-center justify-center gap-2 py-3 bg-green-900/20 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}
@@ -2336,7 +2558,8 @@ export default function App() {
                     {!user ? "ADMIN_LOGIN_REQUIRED" : "CLEAR_DATABASE"}
                   </button>
                   {!isGDriveConnected && user && (
-                    <div className={cn("absolute bottom-full left-0 mb-2 w-48 p-2 bg-red-950 border border-red-900 text-red-400 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                    <div className={cn("absolute bottom-full left-0 mb-2 w-80 p-3 bg-red-950/90 border border-red-900 text-red-400 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 font-mono leading-relaxed shadow-[0_0_20px_rgba(239,68,68,0.2)] backdrop-blur-sm border-l-4 border-l-red-600", fontSize === 'large' ? "text-sm" : "text-xs")} style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                      <p className="font-bold border-b border-red-900/50 pb-1 mb-1 text-red-500 uppercase">Wipe_Protocol_Locked:</p>
                       SYSTEM_LOCKED: Google Drive must be connected for mandatory backup before clearing the database.
                     </div>
                   )}
