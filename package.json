@@ -1,6 +1,6 @@
 {
   "name": "react-example",
-  "main": ".vite/build/main.js",
+  "main": ".vite/build/main.cjs",
   "private": true,
   "version": "0.0.0",
   "type": "module",

@@ -4,7 +4,7 @@ export default defineConfig({
   build: {
     lib: {
       entry: './src/electron-main.ts',
-      fileName: () => 'main.js',
+      fileName: () => 'main.cjs',
       formats: ['cjs'],
     },
     rollupOptions: {
