@@ -260,7 +260,7 @@ export default function App() {
   // Check GDrive Status
   useEffect(() => {
     if (user) {
-      fetch('/api/auth/google/status')
+      fetch('/api/auth/google/status', { credentials: 'include' })
         .then(async res => {
           const contentType = res.headers.get("content-type");
           if (contentType && contentType.indexOf("application/json") !== -1) {
@@ -688,6 +688,7 @@ export default function App() {
       const res = await fetch('/api/export/gdrive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           csvData: csv,
           fileName: `terminal_backup_pre_clear_${format(new Date(), 'yyyy-MM-dd_HH-mm-ss')}.csv`
@@ -1214,7 +1215,7 @@ export default function App() {
         setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Detected iframe environment. If authentication fails, please open the application in a new tab using the "Shared App URL" or "Development App URL".', type: 'system' }]);
       }
 
-      const res = await fetch('/api/auth/google/url');
+      const res = await fetch('/api/auth/google/url', { credentials: 'include' });
       const contentType = res.headers.get("content-type");
       
       if (!contentType || contentType.indexOf("application/json") === -1) {
@@ -2238,14 +2239,14 @@ export default function App() {
                       <label className={cn("text-green-400 uppercase font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}>Standalone App URL</label>
                       <Info size={12} className="text-green-500/50 cursor-help" />
                       <div className="absolute bottom-full left-0 mb-2 w-64 p-2 bg-black border border-green-500 text-[10px] text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 leading-relaxed">
-                        The exact URL where this terminal is running (e.g. http://localhost:3000). Google uses this to verify the redirect destination after login. Used to calculate the OAuth Redirect URI.
+                        The public URL of this app. In AI Studio, leave this BLANK to use the current URL automatically. If testing locally or via Electron, set to http://localhost:3000 (or http://localhost:4000 for Electron).
                       </div>
                     </div>
                     <input 
                       type="text"
                       value={appUrl}
                       onChange={(e) => setAppUrl(e.target.value)}
-                      placeholder="e.g. http://localhost:3000"
+                      placeholder="Leave blank for auto-detection (recommended)"
                       className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 placeholder:text-green-600", fontSize === 'large' ? "text-base" : "text-sm")}
                     />
                   </div>

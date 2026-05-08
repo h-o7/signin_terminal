@@ -118,12 +118,24 @@ export function setupApiRoutes(app: express.Express) {
       });
 
       if (tokens.refresh_token) {
-        res.cookie('gdrive_refresh_token', tokens.refresh_token, {
+        // Set basic cookie options
+        const cookieOptions: any = {
           httpOnly: true,
-          secure: req.headers.host?.includes('localhost') ? false : true,
+          secure: true, // Always true for AI Studio (HTTPS)
           sameSite: 'none',
-          maxAge: 30 * 24 * 60 * 60 * 1000
-        });
+          maxAge: 30 * 24 * 60 * 60 * 1000,
+          path: '/',
+          partitioned: true // For modern browsers in iframes
+        };
+
+        // If explicitly localhost, we can relax secure
+        if (req.headers.host?.includes('localhost')) {
+          cookieOptions.secure = false;
+          cookieOptions.sameSite = 'lax';
+          delete cookieOptions.partitioned;
+        }
+
+        res.cookie('gdrive_refresh_token', tokens.refresh_token, cookieOptions);
       }
 
       res.send(`
@@ -157,10 +169,12 @@ export function setupApiRoutes(app: express.Express) {
 
   // Disconnect
   app.post('/api/auth/google/disconnect', (req, res) => {
+    const isLocalhost = !!req.headers.host?.includes('localhost');
     res.clearCookie('gdrive_refresh_token', {
       httpOnly: true,
-      secure: req.headers.host?.includes('localhost') ? false : true,
-      sameSite: 'none'
+      secure: !isLocalhost,
+      sameSite: isLocalhost ? 'lax' : 'none',
+      path: '/'
     });
     res.json({ success: true });
   });
