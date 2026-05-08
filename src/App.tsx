@@ -715,20 +715,23 @@ export default function App() {
   };
 
   const handleClearDatabase = async () => {
-    if (!isGDriveConnected) {
-      alert('CRITICAL_RESTRICTION: Google Drive must be connected for automated backup before clearing the database.');
-      return;
-    }
+    let backupPerformed = false;
 
-    if (!confirm('ARE YOU SURE? THIS WILL BACK UP DATA TO GOOGLE DRIVE AND THEN PERMANENTLY DELETE ALL LOGS AND USER MAPPINGS.')) return;
-    
-    setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Initializing full system wipe with mandatory backup...', type: 'system' }]);
-    
-    // 1. Mandatory Backup
-    const backupResult = await performGoogleDriveExport();
-    if (!backupResult.success && backupResult.message !== 'No data to export') {
-      alert('SYSTEM_HALT: Automated backup failed. Database wipe cancelled to prevent data loss. Error: ' + backupResult.error);
-      return;
+    if (isGDriveConnected) {
+      if (!confirm('ARE YOU SURE? THIS WILL BACK UP DATA TO GOOGLE DRIVE AND THEN PERMANENTLY DELETE ALL LOGS AND USER MAPPINGS.')) return;
+      
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Initializing system wipe with mandatory backup...', type: 'system' }]);
+      
+      // 1. Mandatory Backup
+      const backupResult = await performGoogleDriveExport();
+      if (!backupResult.success && backupResult.message !== 'No data to export') {
+        alert('SYSTEM_HALT: Automated backup failed. Database wipe cancelled to prevent data loss. Error: ' + backupResult.error);
+        return;
+      }
+      backupPerformed = true;
+    } else {
+      if (!confirm('WARNING: GOOGLE_DRIVE_NOT_CONNECTED. No automated backup can be performed. PERMANENTLY DELETE ALL LOGS AND USER MAPPINGS? THIS ACTION IS IRREVERSIBLE.')) return;
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Initializing system wipe (NO_BACKUP_PERFORMED)...', type: 'system' }]);
     }
 
     // 2. Clear Database
@@ -741,8 +744,12 @@ export default function App() {
       mappingsSnapshot.docs.forEach(d => batch.delete(d.ref));
       
       await batch.commit();
-      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM_WIPE_COMPLETE: All data purged after successful backup.', type: 'system' }]);
-      alert('Database cleared and backed up to Google Drive successfully.');
+      const completionMsg = backupPerformed 
+        ? 'SYSTEM_WIPE_COMPLETE: All data purged after successful backup.' 
+        : 'SYSTEM_WIPE_COMPLETE: All data purged (No backup performed).';
+      
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: completionMsg, type: 'system' }]);
+      alert(backupPerformed ? 'Database cleared and backed up to Google Drive successfully.' : 'Database cleared successfully.');
     } catch (err: any) {
       console.error('Wipe error:', err);
       alert('Failed to clear database: ' + err.message);
