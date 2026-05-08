@@ -29,7 +29,9 @@ export const signIn = async () => {
     
     // Provide a more user-friendly alert for common Electron/Firebase issues
     if (error.code === 'auth/unauthorized-domain') {
-       alert(`ERROR: Unauthorized Domain.\n\nTo fix this for Electron, you MUST add "http://localhost:4000" to your Firebase Console under Authentication > Settings > Authorized Domains.\n\nCurrent Origin: ${window.location.origin}`);
+       alert(`ERROR: Unauthorized Domain.\n\nTo fix this for Electron:\n1. Go to Firebase Console > Authentication > Settings > Authorized Domains.\n2. Add "localhost" (just the word, no http/port).\n\nDetails:\nCurrent Origin: ${window.location.origin}\nIf "file://" is shown above, the local server failed to start.`);
+    } else if (error.message.includes('location.protocol')) {
+       alert(`ERROR: Environment Not Supported.\n\nFirebase Auth requires a server-like environment. The app is currently running on "${window.location.origin}".\n\nPlease ensure you are running the latest build and that "http://localhost:4000" is being used.`);
     } else {
        alert(`AUTH_ERROR: ${error.code}\n${error.message}`);
     }

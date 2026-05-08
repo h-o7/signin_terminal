@@ -38,16 +38,18 @@ function createWindow() {
       const expressApp = express();
       const PORT = 4000;
       
-      // In Electron Forge + Vite, the renderer files are in a specific location
-      // relative to the main process bundle.
-      const staticPath = path.join(__dirname, '../renderer/main_window');
+      // Use app.getAppPath() to get the root of the app, works better in packaged apps
+      const appPath = app.getAppPath();
+      const staticPath = path.join(appPath, '.vite/renderer/main_window');
       
+      console.log(`[SERVER] App Path: ${appPath}`);
       console.log(`[SERVER] Serving static files from: ${staticPath}`);
       
       expressApp.use(express.static(staticPath));
       
       expressApp.get('*', (_req, res) => {
         const indexPath = path.join(staticPath, 'index.html');
+        // Check if file exists before sending
         res.sendFile(indexPath);
       });
 
@@ -56,8 +58,17 @@ function createWindow() {
       });
 
       mainWindow.loadURL(`http://localhost:${PORT}`);
+      
+      mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+        console.error(`[SERVER] Failed to load URL: ${validatedURL} (${errorCode}: ${errorDescription})`);
+        if (validatedURL.includes('localhost')) {
+          console.log('[SERVER] Falling back to file:// due to load failure');
+          mainWindow.loadFile(path.join(appPath, '.vite/renderer/main_window/index.html'));
+        }
+      });
     } catch (error) {
       console.error('[SERVER] Failed to start local server, falling back to file://', error);
+      // Fallback relative to __dirname as a last resort
       mainWindow.loadFile(path.join(__dirname, '../renderer/main_window/index.html'));
     }
   }
