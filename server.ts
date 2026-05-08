@@ -4,7 +4,7 @@ import path from 'path';
 import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import fs from 'fs';
-import { setupApiRoutes } from './src/api-routes.js';
+import { setupApiRoutes } from './src/api-routes.ts';
 
 dotenv.config();
 

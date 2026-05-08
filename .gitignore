@@ -9,3 +9,4 @@ coverage/
 .firebase/
 .vite/
 out/
+settings.json

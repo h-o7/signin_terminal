@@ -51,17 +51,46 @@ The project is already configured with Electron Forge and Vite integration.
 -   **vite.renderer.config.ts**: Configures how the Electron **Renderer Process** (the React UI) is bundled.
 -   **src/electron-main.ts**: The entry point for the desktop application window management.
 
-## Standalone Configuration (API_CONFIG)
+## Google Drive Setup Guide
 
-To use this application outside of the AI Studio environment, you must configure your own Google Cloud credentials:
+To enable Google Drive export features, you must configure your own Google Cloud OAuth 2.0 credentials. This allows the application to securely save CSV logs to your Drive.
 
-1.  **Access Settings**: Click the gear icon (SYSTEM_SETTINGS) in the bottom-right.
-2.  **Navigate to API_CONFIG**: Select the `API_CONFIG` tab at the top of the settings menu.
-3.  **Enter Credentials**:
-    - **Google Client ID**: Obtained from [Google Cloud Console](https://console.cloud.google.com/).
-    - **Google Client Secret**: Obtained from Google Cloud Console.
-    - **Standalone App URL**: The URL where your app is running (e.g., `http://localhost:3000`).
-4.  **Save Config**: Click `SAVE_API_CONFIG` and confirm when prompted.
+### 1. Create a Google Cloud Project
+1.  Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2.  Create a **New Project**.
+3.  Go to **APIs & Services > Library** and enable the **Google Drive API**.
+
+### 2. Configure OAuth Consent Screen
+1.  Go to **APIs & Services > OAuth consent screen**.
+2.  Choose **External** user type and fill in the required app information.
+3.  Add the scope: `https://www.googleapis.com/auth/drive.file`.
+4.  Add your email under **Test users** while the app is in "Testing" mode.
+
+### 3. Create Credentials
+1.  Go to **APIs & Services > Credentials**.
+2.  Click **Create Credentials > OAuth client ID**.
+3.  Select **Web application** as the Application type.
+4.  **Authorized JavaScript origins**:
+    -   Add `http://localhost:3000` (for web development).
+    -   Add `http://localhost:4000` (for packaged Electron apps).
+    -   Add your deployed URL (e.g., `https://your-app.web.app`).
+5.  **Authorized redirect URIs**:
+    -   Add `http://localhost:3000/auth/callback`
+    -   Add `http://localhost:4000/auth/callback`
+    -   Add `https://your-app.web.app/auth/callback`
+6.  Click **Create** and copy your **Client ID** and **Client Secret**.
+
+### 4. Configure the Application
+1.  Open the App Settings (gear icon in the bottom-right).
+2.  Go to the **API_CONFIG** tab.
+3.  Paste your **Google Client ID** and **Google Client Secret**.
+4.  **Standalone App URL**:
+    -   This is the base URL of your application.
+    -   **Why is this needed?** It's used by the server to generate the correct return path after Google login.
+    -   For **Local Web**: Use `http://localhost:3000`
+    -   For **Packaged App**: Use `http://localhost:4000` (Internal server port)
+    -   For **Cloud Deployment**: Use your full public URL (e.g., `https://ais-pre-...run.app`)
+5.  Click `SAVE_API_SETTINGS`.
 
 ## Local Development
 
