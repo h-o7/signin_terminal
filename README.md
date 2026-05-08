@@ -40,11 +40,16 @@ This approach bundles the Node.js runtime and the server code.
 4.  **Note**: Ensure `dist/` folder and `settings.json` are in the same directory as the `.exe` when distributing.
 
 ### Option 2: Using Electron (Full Desktop App)
-For a better user experience with a dedicated window:
-1.  **Install Electron Forge**: `npm install --save-dev @electron-forge/cli`
-2.  **Initialize**: `npx electron-forge import`
-3.  **Configure**: Update `main.js` to start the Express server and load the local URL.
-4.  **Make**: `npm run make` (produces an installer/exe in `out/`).
+The project is already configured with Electron Forge and Vite integration.
+1.  **Package**: `npm run package` (creates a portable app in `out/`).
+2.  **Make**: `npm run make` (produces distribution-ready installers/zips in `out/make/`).
+
+## Project Configuration Files
+
+-   **forge.config.js**: The main configuration for **Electron Forge**. It defines how the desktop application is packaged, what installers (makers) are generated, and manages the integration between Electron and Vite via plugins.
+-   **vite.main.config.ts**: Configures how the Electron **Main Process** (the background Node.js script) is bundled.
+-   **vite.renderer.config.ts**: Configures how the Electron **Renderer Process** (the React UI) is bundled.
+-   **src/electron-main.ts**: The entry point for the desktop application window management.
 
 ## Standalone Configuration (API_CONFIG)
 
