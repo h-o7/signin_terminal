@@ -10,6 +10,8 @@ import Papa from 'papaparse';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 
+const TERMINAL_VERSION = "CMD_TERMINAL_V2.3";
+
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -1290,7 +1292,7 @@ export default function App() {
           </div>
           
           <div className="space-y-2">
-            <h1 className={cn("font-black tracking-tighter text-white", fontSize === 'large' ? "text-6xl" : "text-4xl")}>TERMINAL_LOGGER_V2.2</h1>
+            <h1 className={cn("font-black tracking-tighter text-white", fontSize === 'large' ? "text-6xl" : "text-4xl")}>{TERMINAL_VERSION}</h1>
             <p className={cn("text-green-400 uppercase tracking-widest", fontSize === 'large' ? "text-base" : "text-sm")}>Secure Entry Management System</p>
           </div>
 
@@ -1357,7 +1359,7 @@ export default function App() {
       )}>
         <div className="flex items-center gap-2">
           <TerminalIcon size={20} />
-          <span className="font-bold tracking-wider">CMD_TERMINAL_V2.3</span>
+          <span className="font-bold tracking-wider">{TERMINAL_VERSION}</span>
           <span className="text-[10px] bg-green-900/30 px-2 py-0.5 rounded text-green-400 animate-pulse">LIVE</span>
         </div>
         <div className="flex flex-wrap items-center gap-3 justify-end flex-1 min-w-0">
