@@ -2,7 +2,12 @@ import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import express from 'express';
 import fs from 'fs';
+import cookieParser from 'cookie-parser';
+import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
+import { setupApiRoutes } from './api-routes.js';
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,6 +43,13 @@ function createWindow() {
     try {
       const expressApp = express();
       const PORT = 4000;
+      
+      // Essential middleware for API routes
+      expressApp.use(express.json({ limit: '10mb' }));
+      expressApp.use(cookieParser());
+      
+      // Register API routes for Google Drive and Settings
+      setupApiRoutes(expressApp);
       
       // Try to find the static files path more robustly
       const appPath = app.getAppPath();
