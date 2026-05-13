@@ -2351,14 +2351,21 @@ export default function App() {
                               value={shutdownTime}
                               onChange={(e) => {
                                 const val = e.target.value;
-                                // Simple pattern check for HH:mm
-                                if (/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(val) || val === "" || /^[0-2]$/.test(val) || /^[0-2][0-9]:?$/.test(val)) {
+                                // Allow starting part of HH:mm format
+                                if (/^[0-9]{0,2}:?[0-9]{0,2}$/.test(val)) {
                                   setShutdownTime(val);
                                 }
                               }}
                               onBlur={() => {
                                 // Basic validation/formatting on blur
-                                const parts = shutdownTime.split(':');
+                                let val = shutdownTime;
+                                if (!val.includes(':') && val.length > 0) {
+                                  if (val.length <= 2) val = `${val.padStart(2, '0')}:00`;
+                                  else if (val.length === 3) val = `${val.slice(0, 2)}:${val.slice(2)}0`;
+                                  else if (val.length === 4) val = `${val.slice(0, 2)}:${val.slice(2)}`;
+                                }
+                                
+                                const parts = val.split(':');
                                 if (parts.length === 2) {
                                   let h = parseInt(parts[0]) || 0;
                                   let m = parseInt(parts[1]) || 0;
