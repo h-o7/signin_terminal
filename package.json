@@ -1,21 +1,15 @@
 {
   "name": "react-example",
-  "main": ".vite/build/main.cjs",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "start": "tsx server.ts",
-    "build": "vite build",
-    "predeploy": "npm run clean && npm run build",
-    "deploy": "gh-pages -d dist",
-    "firebase-deploy": "npm run build && firebase deploy",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rimraf dist",
-    "lint": "tsc --noEmit",
-    "package": "electron-forge package",
-    "make": "electron-forge make"
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
@@ -53,6 +47,7 @@
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "electron": "^34.0.0",
+    "esbuild": "^0.28.0",
     "gh-pages": "^6.3.0",
     "rimraf": "^6.1.3",
     "tailwindcss": "^4.1.14",

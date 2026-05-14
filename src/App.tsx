@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users, AlertTriangle, RotateCcw, Info, Github, Code } from 'lucide-react';
+import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users, AlertTriangle, RotateCcw, Info, Github, Code, ChevronDown } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -52,7 +52,7 @@ export default function App() {
   const [reportStartDate, setReportStartDate] = useState('2026-01-01');
   const [reportEndDate, setReportEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   // Helper to get formatted timezone label with offset
-  const getTimezoneLabel = (tz: string, label?: string) => {
+  const getTimezoneLabel = (tz: string, tzName?: string, cityName?: string) => {
     try {
       const now = new Date();
       const formatter = new Intl.DateTimeFormat('en-US', {
@@ -61,17 +61,56 @@ export default function App() {
       });
       const parts = formatter.formatToParts(now);
       const offsetPart = parts.find(p => p.type === 'timeZoneName');
-      const offset = offsetPart ? offsetPart.value.replace('GMT', 'UTC') : '';
-      const displayOffset = offset === 'UTC' ? 'UTC+0' : offset;
-      return label ? `${label} (${displayOffset})` : `${tz} (${displayOffset})`;
+      let offset = offsetPart ? offsetPart.value.replace('GMT', 'UTC').replace('−', '-') : '';
+      
+      // Secondary fallback for offset if shortOffset doesn't return what we expect
+      if (!offset || !offset.includes('UTC')) {
+        const timeString = now.toLocaleTimeString('en-US', { timeZone: tz, timeZoneName: 'shortOffset' });
+        const match = timeString.match(/(?:GMT|UTC|UT)([+-−]\d+)(?::\d+)?/);
+        if (match) {
+          offset = `UTC${match[1].replace('−', '-')}`;
+        } else if (timeString.includes('GMT') || timeString.includes('UTC') || timeString.includes('UT')) {
+          offset = 'UTC+0';
+        }
+      }
+
+      const displayOffset = offset === 'UTC' ? 'UTC+0' : (offset || 'UTC+0');
+      
+      // Force Baker UTC label if explicitly requested as it often fails in generic formatters
+      if (tz === 'Pacific/Baker' && !displayOffset.includes('-12')) {
+        return tzName ? `${tzName} (${cityName || 'Baker Island'} UTC-12)` : `Pacific/Baker (UTC-12)`;
+      }
+      
+      if (tzName && cityName) {
+        return `${tzName} (${cityName} ${displayOffset})`;
+      }
+      return tzName ? `${tzName} (${displayOffset})` : `${tz} (${displayOffset})`;
     } catch (e) {
-      return label || tz;
+      // Third level fallback: manual mapping for very basic ones if browser fails
+      if (tz === 'Pacific/Baker') return `${tzName || 'Baker Island Time'} (${cityName || 'Baker Island'} UTC-12)`;
+      if (tz === 'UTC') return `${tzName || 'Universal Time'} (London UTC+0)`;
+      return tzName || tz;
     }
   };
 
   const [selectedTimezone, setSelectedTimezone] = useState<string>(
     localStorage.getItem('terminal_timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone
   );
+  const [showAllTimezones, setShowAllTimezones] = useState(false);
+  const [showAllTimezonesOnce, setShowAllTimezonesOnce] = useState(false); // To keep them shown once expanded
+  const [isTzMenuOpen, setIsTzMenuOpen] = useState(false);
+  const tzMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close timezone menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (tzMenuRef.current && !tzMenuRef.current.contains(event.target as Node)) {
+        setIsTzMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
   const [fontSize, setFontSize] = useState<'normal' | 'large'>(
     (localStorage.getItem('terminal_font_size') as 'normal' | 'large') || 'normal'
   );
@@ -2185,43 +2224,153 @@ export default function App() {
                 <div className="space-y-3 animate-in fade-in slide-in-from-left-2 duration-200">
                   {/* 1. Timezone Settings */}
                   <div className="p-3 bg-green-950/10 border border-green-900/10 rounded space-y-2">
-                    <div className="flex items-center gap-2 group relative cursor-help">
-                      <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1 group-hover:text-green-300 transition-colors", fontSize === 'large' ? "text-sm" : "text-xs")}>
-                        <Calendar size={12} /> System Timezone
-                      </label>
-                      <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
-                      <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm border-l-4 border-l-green-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
-                        <p className="font-bold border-b border-green-900 pb-1 mb-1 text-green-500 uppercase">System_Clock_Protocol:</p>
-                        Affects timestamp conversion in generated reports.
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2 group relative cursor-help">
+                        <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1 group-hover:text-green-300 transition-colors", fontSize === 'large' ? "text-sm" : "text-xs")}>
+                          <Calendar size={12} /> System Timezone
+                        </label>
+                        <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
+                        <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm border-l-4 border-l-green-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                          <p className="font-bold border-b border-green-900 pb-1 mb-1 text-green-500 uppercase">System_Clock_Protocol:</p>
+                          Affects timestamp conversion in generated reports.
+                        </div>
                       </div>
+                      
+                      <button 
+                        onClick={() => {
+                          setShowAllTimezones(!showAllTimezones);
+                          setShowAllTimezonesOnce(true);
+                        }}
+                        className={cn(
+                          "px-2 py-0.5 border transition-all font-bold uppercase tracking-widest",
+                          showAllTimezones 
+                            ? "bg-green-500 border-green-400 text-black shadow-[0_0_10px_rgba(34,197,94,0.3)]" 
+                            : "bg-black border-green-900 text-green-600 hover:text-green-400 hover:border-green-700",
+                          fontSize === 'large' ? "text-[10px]" : "text-[9px]"
+                        )}
+                      >
+                        {showAllTimezones ? 'SHOW_LESS' : 'SHOW_ALL_TIMEZONES'}
+                      </button>
                     </div>
-                    <select 
-                      value={selectedTimezone}
-                      onChange={(e) => {
-                        const tz = e.target.value;
-                        setSelectedTimezone(tz);
-                        localStorage.setItem('terminal_timezone', tz);
-                      }}
-                      className={cn("w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500", fontSize === 'large' ? "text-base" : "text-sm")}
-                    >
-                      <optgroup label="Common Timezones">
-                        <option value="UTC">{getTimezoneLabel('UTC', 'Universal Time')}</option>
-                        <option value="America/New_York">{getTimezoneLabel('America/New_York', 'Eastern Time (New York)')}</option>
-                        <option value="America/Chicago">{getTimezoneLabel('America/Chicago', 'Central Time (Chicago)')}</option>
-                        <option value="America/Denver">{getTimezoneLabel('America/Denver', 'Mountain Time (Denver)')}</option>
-                        <option value="America/Los_Angeles">{getTimezoneLabel('America/Los_Angeles', 'Pacific Time (Los Angeles)')}</option>
-                        <option value="Europe/London">{getTimezoneLabel('Europe/London', 'Greenwich Mean Time (London)')}</option>
-                        <option value="Europe/Paris">{getTimezoneLabel('Europe/Paris', 'Central European Time (Paris)')}</option>
-                        <option value="Asia/Tokyo">{getTimezoneLabel('Asia/Tokyo', 'Japan Standard Time (Tokyo)')}</option>
-                        <option value="Asia/Shanghai">{getTimezoneLabel('Asia/Shanghai', 'China Standard Time (Shanghai)')}</option>
-                        <option value="Australia/Sydney">{getTimezoneLabel('Australia/Sydney', 'Australian Eastern Time (Sydney)')}</option>
-                      </optgroup>
-                      <optgroup label="System Default">
-                        <option value={Intl.DateTimeFormat().resolvedOptions().timeZone}>
-                          {getTimezoneLabel(Intl.DateTimeFormat().resolvedOptions().timeZone, 'Detected')}
-                        </option>
-                      </optgroup>
-                    </select>
+                    <div className="relative" ref={tzMenuRef}>
+                      <button
+                        onClick={() => setIsTzMenuOpen(!isTzMenuOpen)}
+                        className={cn(
+                          "w-full bg-black border border-green-900 p-2 text-green-400 rounded outline-none focus:border-green-500 flex items-center justify-between text-left", 
+                          fontSize === 'large' ? "text-base" : "text-sm"
+                        )}
+                      >
+                        <span className="truncate">
+                          {getTimezoneLabel(selectedTimezone)}
+                        </span>
+                        <ChevronDown size={16} className={cn("transition-transform", isTzMenuOpen && "rotate-180")} />
+                      </button>
+
+                      {isTzMenuOpen && (
+                        <div className="absolute top-full left-0 w-full mt-1 bg-black border border-green-500 rounded z-50 shadow-2xl max-h-[300px] overflow-y-auto scrollbar-green">
+                          {/* System Default */}
+                          <div className="px-2 py-1 text-[10px] text-green-700 font-bold uppercase bg-green-900/10 border-b border-green-900/30">System Default</div>
+                          <button
+                            onClick={() => {
+                              const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                              setSelectedTimezone(tz);
+                              localStorage.setItem('terminal_timezone', tz);
+                              setIsTzMenuOpen(false);
+                            }}
+                            className={cn(
+                              "w-full text-left px-3 py-2 hover:bg-green-900/30 transition-colors border-b border-green-900/10",
+                              selectedTimezone === Intl.DateTimeFormat().resolvedOptions().timeZone ? "text-green-300 bg-green-900/20" : "text-green-500",
+                              fontSize === 'large' ? "text-sm" : "text-xs"
+                            )}
+                          >
+                            {getTimezoneLabel(Intl.DateTimeFormat().resolvedOptions().timeZone, 'Detected')}
+                          </button>
+
+                          {/* Common Timezones */}
+                          <div className="px-2 py-1 text-[10px] text-green-700 font-bold uppercase bg-green-900/10 border-b border-green-900/30 border-t border-green-900/30">Common Timezones</div>
+                          {[
+                            ['UTC', 'Universal Time'],
+                            ['America/New_York', 'Eastern Time', 'New York'],
+                            ['America/Chicago', 'Central Time', 'Chicago'],
+                            ['America/Denver', 'Mountain Time', 'Denver'],
+                            ['America/Los_Angeles', 'Pacific Time', 'Los Angeles'],
+                            ['Europe/London', 'Greenwich Mean Time', 'London'],
+                            ['Europe/Paris', 'Central European Time', 'Paris'],
+                            ['Asia/Tokyo', 'Japan Standard Time', 'Tokyo'],
+                            ['Asia/Shanghai', 'China Standard Time', 'Shanghai'],
+                            ['Australia/Sydney', 'Australian Eastern Time', 'Sydney'],
+                          ].map(([tz, label, city]) => (
+                            <button
+                              key={tz}
+                              onClick={() => {
+                                setSelectedTimezone(tz);
+                                localStorage.setItem('terminal_timezone', tz);
+                                setIsTzMenuOpen(false);
+                              }}
+                              className={cn(
+                                "w-full text-left px-3 py-2 hover:bg-green-900/30 transition-colors border-b border-green-900/10",
+                                selectedTimezone === tz ? "text-green-300 bg-green-900/20" : "text-green-500",
+                                fontSize === 'large' ? "text-sm" : "text-xs"
+                              )}
+                            >
+                              {getTimezoneLabel(tz, label, city)}
+                            </button>
+                          ))}
+
+                          {/* Expanded List */}
+                          {showAllTimezonesOnce && showAllTimezones && (
+                            <>
+                              <div className="px-2 py-1 text-[10px] text-green-700 font-bold uppercase bg-green-900/10 border-b border-green-900/30 border-t border-green-900/30">Expanded Global List</div>
+                              {[
+                                ['Pacific/Baker', 'Baker Island Time', 'Baker Island'], // -12
+                                ['Pacific/Midway', 'Samoa Time', 'Midway Island'],      // -11
+                                ['Pacific/Honolulu', 'Hawaii-Aleutian Time', 'Honolulu'], // -10
+                                ['Pacific/Gambier', 'Gambier Time', 'Gambier'],         // -9
+                                ['Pacific/Pitcairn', 'Pitcairn Standard Time', 'Pitcairn'], // -8
+                                ['America/Phoenix', 'Mountain Standard Time', 'Phoenix'],  // -7
+                                ['America/Belize', 'Central Standard Time', 'Belize'],    // -6
+                                ['America/Panama', 'Eastern Standard Time', 'Panama'],    // -5
+                                ['America/Caracas', 'Venezuela Time', 'Caracas'],         // -4
+                                ['America/Paramaribo', 'Suriname Time', 'Paramaribo'],    // -3
+                                ['America/Noronha', 'Fernando de Noronha Time', 'Noronha'], // -2
+                                ['Atlantic/Cape_Verde', 'Cape Verde Time', 'Cape Verde'], // -1
+                                ['UTC', 'Universal Time', 'UTC'],                          // +0
+                                ['Africa/Lagos', 'West Africa Time', 'Lagos'],             // +1
+                                ['Africa/Johannesburg', 'South Africa Time', 'Johannesburg'], // +2
+                                ['Africa/Nairobi', 'East Africa Time', 'Nairobi'],         // +3
+                                ['Asia/Dubai', 'Gulf Standard Time', 'Dubai'],             // +4
+                                ['Asia/Karachi', 'Pakistan Time', 'Karachi'],             // +5
+                                ['Asia/Dhaka', 'Bangladesh Time', 'Dhaka'],               // +6
+                                ['Asia/Jakarta', 'Western Indonesian Time', 'Jakarta'],    // +7
+                                ['Asia/Singapore', 'Singapore Time', 'Singapore'],         // +8
+                                ['Asia/Tokyo', 'Japan Time', 'Tokyo'],                     // +9
+                                ['Pacific/Port_Moresby', 'Australian Eastern Time', 'Port Moresby'], // +10
+                                ['Pacific/Guadalcanal', 'Solomon Islands Time', 'Guadalcanal'], // +11
+                                ['Pacific/Majuro', 'Marshall Islands Time', 'Majuro'],     // +12
+                                ['Pacific/Tongatapu', 'Tonga Time', 'Tongatapu'],          // +13
+                                ['Pacific/Kiritimati', 'Line Islands Time', 'Kiritimati'],   // +14
+                              ].map(([tz, label, city]) => (
+                                <button
+                                  key={tz}
+                                  onClick={() => {
+                                    setSelectedTimezone(tz);
+                                    localStorage.setItem('terminal_timezone', tz);
+                                    setIsTzMenuOpen(false);
+                                  }}
+                                  className={cn(
+                                    "w-full text-left px-3 py-2 hover:bg-green-900/30 transition-colors border-b border-green-900/10",
+                                    selectedTimezone === tz ? "text-green-300 bg-green-900/20" : "text-green-500",
+                                    fontSize === 'large' ? "text-sm" : "text-xs"
+                                  )}
+                                >
+                                  {getTimezoneLabel(tz, label, city)}
+                                </button>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
@@ -2237,61 +2386,71 @@ export default function App() {
                           </div>
                         </div>
                         
-                        <div className="flex items-center gap-2 group relative cursor-help">
-                          <AlertTriangle size={14} className="text-red-500" />
-                          <span className={cn("text-red-400 font-bold uppercase tracking-widest", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
-                            Auth
-                          </span>
-                          <div className="absolute top-full right-0 mt-2 w-80 p-3 bg-black/95 border border-red-900 text-red-300 rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono backdrop-blur-sm shadow-[0_0_20px_rgba(239,68,68,0.1)] border-r-4 border-r-red-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
-                            <div className="text-red-500 font-bold mb-1 border-b border-red-900/50 pb-1 uppercase">Iframe_Restriction_Protocol:</div>
-                            If you encounter 404 errors during Google Drive authentication, ensure your "Standalone App URL" matches exactly where you are running the app (e.g. http://localhost:3000), or open the application in a new tab to bypass iframe restrictions.
+                        <div className="flex items-center gap-4">
+                          {/* Clear Database - Smaller version moved here */}
+                          <div className="relative group">
+                            <button 
+                              disabled={!isGDriveConnected || !user}
+                              onClick={handleClearDatabase}
+                              className={cn(
+                                "flex items-center gap-1.5 px-2 py-1 bg-amber-900/10 border border-amber-900/50 hover:bg-amber-900/30 text-amber-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", 
+                                fontSize === 'large' ? "text-[10px]" : "text-[9px]"
+                              )}
+                            >
+                              <Trash2 size={12} className="shrink-0" />
+                              <span className="uppercase tracking-widest">
+                                {!user ? "AUTH_REQD" : "CLEAR_DB"}
+                              </span>
+                            </button>
+                            {isGDriveConnected && user && (
+                              <div className={cn("absolute top-full right-0 mt-2 w-64 p-3 bg-black border border-amber-600 text-amber-400 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 font-mono leading-relaxed shadow-[0_0_20px_rgba(245,158,11,0.2)] backdrop-blur-sm border-r-4 border-r-amber-600", fontSize === 'large' ? "text-sm" : "text-xs")} style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                                <p className="font-bold border-b border-amber-900/50 pb-1 mb-1 text-amber-500 uppercase">Clear_Database_Protocol:</p>
+                                Deletes all session logs permanently from local storage and the cloud database. Requires confirmation.
+                              </div>
+                            )}
+                            {!isGDriveConnected && user && (
+                              <div className={cn("absolute top-full right-0 mt-2 w-80 p-3 bg-amber-950/90 border border-amber-900 text-amber-400 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 font-mono leading-relaxed shadow-[0_0_20px_rgba(245,158,11,0.2)] backdrop-blur-sm border-r-4 border-r-amber-600", fontSize === 'large' ? "text-sm" : "text-xs")} style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                                <p className="font-bold border-b border-amber-900/50 pb-1 mb-1 text-amber-500 uppercase">Wipe_Protocol_Locked:</p>
+                                SYSTEM_LOCKED: Google Drive must be connected for mandatory backup before clearing the database.
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 group relative cursor-help">
+                            <AlertTriangle size={14} className="text-red-500" />
+                            <span className={cn("text-red-400 font-bold uppercase tracking-widest", fontSize === 'large' ? "text-xs" : "text-[10px]")}>
+                              Auth
+                            </span>
+                            <div className="absolute top-full right-0 mt-2 w-80 p-3 bg-black/95 border border-red-900 text-red-300 rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono backdrop-blur-sm shadow-[0_0_20px_rgba(239,68,68,0.1)] border-r-4 border-r-red-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                              <div className="text-red-500 font-bold mb-1 border-b border-red-900/50 pb-1 uppercase">Iframe_Restriction_Protocol:</div>
+                              If you encounter 404 errors during Google Drive authentication, ensure your "Standalone App URL" matches exactly where you are running the app (e.g. http://localhost:3000), or open the application in a new tab to bypass iframe restrictions.
+                            </div>
                           </div>
                         </div>
                       </div>
-                      <div className="flex gap-2">
-                        <div className="flex-1 flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={handleExportToGoogleDrive}
+                          disabled={!user}
+                          className={cn(
+                            "flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-900/20 border border-blue-900 text-blue-400 hover:bg-blue-900/40 rounded transition-all font-bold text-center disabled:opacity-30 disabled:cursor-not-allowed",
+                            fontSize === 'large' ? "text-sm" : "text-xs"
+                          )}
+                        >
+                          <Cloud size={16} className="shrink-0 hidden sm:block" />
+                          <span className="truncate uppercase tracking-tight">{!user ? "(Auth Req)" : (isGDriveConnected ? 'EXPORT_TO_GDRIVE' : 'CONNECT_GDRIVE_&_EXPORT')}</span>
+                        </button>
+                        
+                        {isGDriveConnected && (
                           <button 
-                            onClick={handleExportToGoogleDrive}
+                            onClick={handleDisconnectGoogleDrive}
                             disabled={!user}
-                            className={cn(
-                              "w-full flex items-center justify-center gap-2 py-2.5 bg-blue-900/20 border border-blue-900 text-blue-400 hover:bg-blue-900/40 rounded transition-all font-bold text-center disabled:opacity-30 disabled:cursor-not-allowed",
-                              fontSize === 'large' ? "text-sm" : "text-xs"
-                            )}
+                            className={cn("flex-1 flex items-center justify-center gap-2 py-2.5 bg-red-900/10 border border-red-900/50 hover:bg-red-900/30 text-red-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
                           >
-                            <Cloud size={16} className="shrink-0 hidden sm:block" />
-                            <span className="truncate uppercase tracking-tight">{!user ? "(Auth Req)" : (isGDriveConnected ? 'EXPORT_TO_GDRIVE' : 'CONNECT_GDRIVE_&_EXPORT')}</span>
+                            <CloudOff size={14} className="hidden sm:block shrink-0" />
+                            <span className="uppercase tracking-tight">DISCONNECT_GDRIVE</span>
                           </button>
-                          
-                          {isGDriveConnected && (
-                            <button 
-                              onClick={handleDisconnectGoogleDrive}
-                              disabled={!user}
-                              className={cn("w-full flex items-center justify-center gap-2 py-2 bg-red-900/10 border border-red-900/50 hover:bg-red-900/30 text-red-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
-                            >
-                              <CloudOff size={14} className="hidden sm:block shrink-0" />
-                              <span className="uppercase tracking-tight">DISCONNECT_GDRIVE</span>
-                            </button>
-                          )}
-                        </div>
-
-                        <div className="flex-1 relative group">
-                          <button 
-                            disabled={!isGDriveConnected || !user}
-                            onClick={handleClearDatabase}
-                            className={cn("w-full h-full flex items-center justify-center gap-2 py-2.5 bg-red-900/20 border border-red-900 hover:bg-red-900/40 text-red-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
-                          >
-                            <Trash2 size={16} className="hidden sm:block shrink-0" />
-                            <span className="truncate uppercase tracking-tight">
-                              {!user ? "AUTH_REQD" : "CLEAR_DB"}
-                            </span>
-                          </button>
-                          {!isGDriveConnected && user && (
-                            <div className={cn("absolute bottom-full right-0 mb-2 w-80 p-3 bg-red-950/90 border border-red-900 text-red-400 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 font-mono leading-relaxed shadow-[0_0_20px_rgba(239,68,68,0.2)] backdrop-blur-sm border-l-4 border-l-red-600", fontSize === 'large' ? "text-sm" : "text-xs")} style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
-                              <p className="font-bold border-b border-red-900/50 pb-1 mb-1 text-red-500 uppercase">Wipe_Protocol_Locked:</p>
-                              SYSTEM_LOCKED: Google Drive must be connected for mandatory backup before clearing the database.
-                            </div>
-                          )}
-                        </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -2307,8 +2466,8 @@ export default function App() {
                             <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
                           </div>
                           <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm border-l-4 border-l-green-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
-                            <p className="font-bold border-b border-green-900 pb-1 mb-1 text-green-500 uppercase">Energy_Protocol:</p>
-                            Energy saving protocol. Terminal dims after specified inactive seconds (0 = disabled) to preserve display life and resources.
+                            <p className="font-bold border-b border-green-900 pb-1 mb-1 text-green-500 uppercase">Screensaver_Protocol:</p>
+                            Burn in prevention protocol. Terminal dims after specified inactive seconds (0 = disabled) to preserve display life and resources.
                           </div>
                           <input 
                             type="range"
@@ -2371,7 +2530,7 @@ export default function App() {
                           </div>
                           <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm border-l-4 border-l-green-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
                             <p className="font-bold border-b border-green-900 pb-1 mb-1 text-green-500 uppercase">Power_Protocol:</p>
-                            Automatically enters "OFFLINE" mode on selected days at the specified time to preserve system resources and enforce curfew.
+                            Program Auto termination on selected days at the specified time.
                           </div>
                           <button 
                             onClick={() => setShutdownEnabled(!shutdownEnabled)}
@@ -2572,41 +2731,49 @@ export default function App() {
                       {isSavingSettings ? 'SAVING...' : (showSaveConfirm ? 'CONFIRM' : 'SAVE_API_SETTINGS')}
                     </button>
 
-                    <button 
-                      onClick={() => {
-                        if (isDevDefaultsApplied && preDevDefaultsSettings) {
-                          // Undo
-                          setGoogleClientId(preDevDefaultsSettings.googleClientId);
-                          setGoogleClientSecret(preDevDefaultsSettings.googleClientSecret);
-                          setAppUrl(preDevDefaultsSettings.appUrl);
-                          setIsDevDefaultsApplied(false);
-                          setPreDevDefaultsSettings(null);
-                          setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: DEV_DEFAULTS changes cancelled.', type: 'system' }]);
-                        } else {
-                          // Apply
-                          setPreDevDefaultsSettings({
-                            googleClientId,
-                            googleClientSecret,
-                            appUrl
-                          });
-                          setGoogleClientId('64052849701-u0oiobrk1e3chhntnhfb5v74polteuje.apps.googleusercontent.com');
-                          setAppUrl('http://localhost:4000');
-                          const envSecret = import.meta.env.VITE_GOOGLE_CLIENT_SECRET;
-                          if (envSecret) setGoogleClientSecret(envSecret);
-                          setIsDevDefaultsApplied(true);
-                        }
-                      }}
-                      className={cn(
-                        "flex items-center justify-center gap-2 py-3 transition-all font-bold rounded",
-                        isDevDefaultsApplied 
-                          ? "bg-red-900/20 border border-red-900/50 hover:bg-red-900/30 text-red-500"
-                          : "bg-amber-900/10 border border-amber-900/50 hover:bg-amber-900/30 text-amber-500",
-                        fontSize === 'large' ? "text-sm" : "text-xs"
+                    <div className="relative group">
+                      <button 
+                        onClick={() => {
+                          if (isDevDefaultsApplied && preDevDefaultsSettings) {
+                            // Undo
+                            setGoogleClientId(preDevDefaultsSettings.googleClientId);
+                            setGoogleClientSecret(preDevDefaultsSettings.googleClientSecret);
+                            setAppUrl(preDevDefaultsSettings.appUrl);
+                            setIsDevDefaultsApplied(false);
+                            setPreDevDefaultsSettings(null);
+                            setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: DEV_DEFAULTS changes cancelled.', type: 'system' }]);
+                          } else {
+                            // Apply
+                            setPreDevDefaultsSettings({
+                              googleClientId,
+                              googleClientSecret,
+                              appUrl
+                            });
+                            setGoogleClientId('64052849701-u0oiobrk1e3chhntnhfb5v74polteuje.apps.googleusercontent.com');
+                            setAppUrl('http://localhost:4000');
+                            const envSecret = import.meta.env.VITE_GOOGLE_CLIENT_SECRET;
+                            if (envSecret) setGoogleClientSecret(envSecret);
+                            setIsDevDefaultsApplied(true);
+                          }
+                        }}
+                        className={cn(
+                          "w-full flex items-center justify-center gap-2 py-3 transition-all font-bold rounded",
+                          isDevDefaultsApplied 
+                            ? "bg-red-900/20 border border-red-900/50 hover:bg-red-900/30 text-red-500"
+                            : "bg-amber-900/10 border border-amber-900/50 hover:bg-amber-900/30 text-amber-500",
+                          fontSize === 'large' ? "text-sm" : "text-xs"
+                        )}
+                      >
+                        {isDevDefaultsApplied ? <X size={16} /> : <Code size={16} />}
+                        {isDevDefaultsApplied ? 'CANCEL' : 'USE_DEV_DEFAULTS'}
+                      </button>
+                      {!isDevDefaultsApplied && (
+                        <div className={cn("absolute bottom-full left-0 mb-2 w-80 p-3 bg-black border border-amber-600 text-amber-400 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 font-mono leading-relaxed shadow-[0_0_20px_rgba(245,158,11,0.2)] backdrop-blur-sm border-l-4 border-l-amber-600", fontSize === 'large' ? "text-sm" : "text-xs")} style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                          <p className="font-bold border-b border-amber-900/50 pb-1 mb-1 text-amber-500 uppercase">Dev_Defaults_Protocol:</p>
+                          Injects pre-configured local development credentials into the system. This allows for immediate testing without manual configuration of OIDC endpoints. Reverts the system to a known debug state.
+                        </div>
                       )}
-                    >
-                      {isDevDefaultsApplied ? <X size={16} /> : <Code size={16} />}
-                      {isDevDefaultsApplied ? 'CANCEL' : 'USE_DEV_DEFAULTS'}
-                    </button>
+                    </div>
 
                     <button 
                       onClick={handleResetToDefaults}
