@@ -2,7 +2,7 @@
   "name": "react-example",
   "private": true,
   "version": "0.0.0",
-  "main": ".vite/build/main.js",
+  "main": ".vite/build/main.cjs",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
