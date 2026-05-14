@@ -92,6 +92,29 @@ export default function App() {
     localStorage.getItem('terminal_shutdown_time') || '19:00'
   );
   const [isSystemShutdown, setIsSystemShutdown] = useState(false);
+  const [shutdownCountdown, setShutdownCountdown] = useState(60);
+
+  // Shutdown countdown timer logic
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (isSystemShutdown) {
+      setShutdownCountdown(60);
+      timer = setInterval(() => {
+        setShutdownCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } else {
+      setShutdownCountdown(60);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isSystemShutdown]);
 
   // MIGRATION: Force default to 7 PM if it was previously set to 5 PM (17:00) by a legacy version
   useEffect(() => {
@@ -107,13 +130,10 @@ export default function App() {
   // Electron Auto-Close logic
   useEffect(() => {
     const isElectron = /electron/i.test(navigator.userAgent) || (window as any).process?.versions?.electron;
-    if (isSystemShutdown && isElectron && shutdownEnabled) {
-      const timer = setTimeout(() => {
-        window.close();
-      }, 5000); // Give user 5 seconds to see the shutdown screen
-      return () => clearTimeout(timer);
+    if (isSystemShutdown && isElectron && shutdownEnabled && shutdownCountdown === 0) {
+      window.close();
     }
-  }, [isSystemShutdown, shutdownEnabled]);
+  }, [isSystemShutdown, shutdownEnabled, shutdownCountdown]);
 
   const [paperSize, setPaperSize] = useState<'A4' | 'LETTER'>('LETTER');
   const [isDimmed, setIsDimmed] = useState(false);
@@ -1467,15 +1487,22 @@ export default function App() {
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-red-900/10 via-black to-black animate-pulse" />
           <AlertTriangle size={64} className="mb-6 animate-bounce" />
           <h1 className="text-4xl font-black mb-2 tracking-tighter">SERVER_OFFLINE</h1>
-          <div className="w-64 h-2 bg-red-900/30 mb-8 overflow-hidden rounded-full">
-            <div className="h-full bg-red-600 animate-[pulse_1.5s_infinite]" style={{ width: '100%' }} />
+          <div className="w-64 h-2 bg-red-900/30 mb-2 overflow-hidden rounded-full">
+            <div 
+              className="h-full bg-red-600 transition-all duration-1000 ease-linear" 
+              style={{ width: `${(shutdownCountdown / 60) * 100}%` }} 
+            />
           </div>
-          <p className="text-xl mb-4 font-bold">SYSTEM_AUTO_SHUTDOWN_ACTIVE</p>
-          {/electron/i.test(navigator.userAgent) && (
-            <div className="mb-4 py-1 px-3 border border-red-500/30 bg-red-500/10 rounded text-[10px] animate-pulse">
-              [ELECTRON_PROTOCOL] REQUESTING_WINDOW_CLOSE_IN_5S...
-            </div>
-          )}
+          <p className="text-red-500 font-black text-2xl mb-8 tubular-nums">{shutdownCountdown}S</p>
+          
+          <p className="text-xl mb-4 font-bold uppercase tracking-widest animate-pulse">
+            {shutdownCountdown > 0 ? 'SYSTEM_AUTO_SHUTDOWN_ACTIVE' : 'SYSTEM_TERMINATED'}
+          </p>
+          <div className="mb-4 py-1 px-3 border border-red-500/30 bg-red-500/10 rounded text-[10px] animate-pulse">
+            {shutdownCountdown > 0 
+              ? `[PROTOCOL] REQUESTING_TERMINATION_IN_${shutdownCountdown}S...`
+              : '[PROTOCOL] TERMINATION_COMPLETE_SYSTEM_LOCKED'}
+          </div>
           <p className="text-sm opacity-60 mb-8 max-w-md uppercase leading-relaxed">
             TERMINAL_STATUS: PRESERVATION_MODE
             <br />
@@ -1489,13 +1516,11 @@ export default function App() {
             
             <button 
               onClick={() => {
-                const pass = prompt('SYSTEM_OVERRIDE_REQUIRED: ENTER OVERRIDE KEY (default: "admin")');
-                if (pass === 'admin') {
-                  setShutdownEnabled(false);
-                  setIsSystemShutdown(false);
-                }
+                // EMERGENCY_OVERRIDE: Allow immediate bypass
+                setIsSystemShutdown(false);
+                setShutdownEnabled(false); // Disable schedule to prevent immediate re-trigger
               }}
-              className="mt-8 text-[10px] text-red-900 hover:text-red-500 transition-colors uppercase underline underline-offset-4 decoration-red-900/50"
+              className="mt-8 px-6 py-2 border border-red-500 text-red-500 hover:bg-red-500 hover:text-black transition-all font-bold uppercase tracking-tighter text-xs"
             >
               initiate_emergency_override_protocol
             </button>
