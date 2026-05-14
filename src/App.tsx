@@ -1484,49 +1484,53 @@ export default function App() {
       {/* Shutdown Overlay */}
       {isSystemShutdown && (
         <div className="fixed inset-0 z-[1000] bg-black text-red-500 font-mono flex flex-col items-center justify-center p-8 text-center overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-red-900/10 via-black to-black animate-pulse" />
-          <AlertTriangle size={64} className="mb-6 animate-bounce" />
-          <h1 className="text-4xl font-black mb-2 tracking-tighter">SERVER_OFFLINE</h1>
-          <div className="w-64 h-2 bg-red-900/30 mb-2 overflow-hidden rounded-full">
-            <div 
-              className="h-full bg-red-600 transition-all duration-1000 ease-linear" 
-              style={{ width: `${(shutdownCountdown / 60) * 100}%` }} 
-            />
-          </div>
-          <p className="text-red-500 font-black text-2xl mb-8 tubular-nums">{shutdownCountdown}S</p>
+          {/* Background Layers */}
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-red-900/10 via-black to-black animate-pulse z-0" />
+          <div className="absolute inset-0 pointer-events-none opacity-[0.03] z-10 bg-[url('https://grainy-gradients.vercel.app/noise.svg')]" />
           
-          <p className="text-xl mb-4 font-bold uppercase tracking-widest animate-pulse">
-            {shutdownCountdown > 0 ? 'SYSTEM_AUTO_SHUTDOWN_ACTIVE' : 'SYSTEM_TERMINATED'}
-          </p>
-          <div className="mb-4 py-1 px-3 border border-red-500/30 bg-red-500/10 rounded text-[10px] animate-pulse">
-            {shutdownCountdown > 0 
-              ? `[PROTOCOL] REQUESTING_TERMINATION_IN_${shutdownCountdown}S...`
-              : '[PROTOCOL] TERMINATION_COMPLETE_SYSTEM_LOCKED'}
-          </div>
-          <p className="text-sm opacity-60 mb-8 max-w-md uppercase leading-relaxed">
-            TERMINAL_STATUS: PRESERVATION_MODE
-            <br />
-            Operations will resume during next scheduled window.
-          </p>
-          
-          <div className="flex flex-col items-center gap-4">
-            <div className="flex items-center gap-2 px-4 py-2 border border-red-900/50 bg-red-950/20 rounded text-red-400 text-xs font-bold uppercase shadow-[0_0_15px_rgba(239,68,68,0.1)]">
-              <Calendar size={14} /> Scheduled Shutdown: {shutdownTime}
+          {/* Content Layer */}
+          <div className="relative z-20 flex flex-col items-center justify-center max-w-2xl w-full">
+            <AlertTriangle size={64} className="mb-6 animate-bounce" />
+            <h1 className="text-4xl font-black mb-2 tracking-tighter text-red-500">SERVER_OFFLINE</h1>
+            <div className="w-64 h-2 bg-red-900/30 mb-2 overflow-hidden rounded-full">
+              <div 
+                className="h-full bg-red-600 transition-all duration-1000 ease-linear" 
+                style={{ width: `${(shutdownCountdown / 60) * 100}%` }} 
+              />
             </div>
+            <p className="text-red-500 font-black text-2xl mb-8 tubular-nums">{shutdownCountdown}S</p>
             
-            <button 
-              onClick={() => {
-                // EMERGENCY_OVERRIDE: Allow immediate bypass
-                setIsSystemShutdown(false);
-                setShutdownEnabled(false); // Disable schedule to prevent immediate re-trigger
-              }}
-              className="mt-8 px-6 py-2 border border-red-500 text-red-500 hover:bg-red-500 hover:text-black transition-all font-bold uppercase tracking-tighter text-xs"
-            >
-              initiate_emergency_override_protocol
-            </button>
+            <p className="text-xl mb-4 font-bold uppercase tracking-widest animate-pulse">
+              {shutdownCountdown > 0 ? 'SYSTEM_AUTO_SHUTDOWN_ACTIVE' : 'SYSTEM_TERMINATED'}
+            </p>
+            <div className="mb-4 py-1 px-3 border border-red-500/30 bg-red-500/10 rounded text-[10px] animate-pulse">
+              {shutdownCountdown > 0 
+                ? `[PROTOCOL] REQUESTING_TERMINATION_IN_${shutdownCountdown}S...`
+                : '[PROTOCOL] TERMINATION_COMPLETE_SYSTEM_LOCKED'}
+            </div>
+            <p className="text-sm opacity-60 mb-8 max-w-md uppercase leading-relaxed">
+              TERMINAL_STATUS: PRESERVATION_MODE
+              <br />
+              Operations will resume during next scheduled window.
+            </p>
+            
+            <div className="flex flex-col items-center gap-4">
+              <div className="flex items-center gap-2 px-4 py-2 border border-red-900/50 bg-red-950/20 rounded text-red-400 text-xs font-bold uppercase shadow-[0_0_15px_rgba(239,68,68,0.1)]">
+                <Calendar size={14} /> Scheduled Shutdown: {shutdownTime}
+              </div>
+              
+              <button 
+                onClick={() => {
+                  // EMERGENCY_OVERRIDE: Allow immediate bypass
+                  setShutdownEnabled(false);
+                  setIsSystemShutdown(false);
+                }}
+                className="mt-8 px-8 py-3 border-2 border-red-500 text-red-500 hover:bg-red-500 hover:text-black transition-all font-black uppercase tracking-widest text-sm cursor-pointer shadow-[0_0_20px_rgba(239,68,68,0.2)] active:scale-95 z-30"
+              >
+                initiate_emergency_override_protocol
+              </button>
+            </div>
           </div>
-
-          <div className="absolute inset-0 pointer-events-none opacity-[0.03] z-50 bg-[url('https://grainy-gradients.vercel.app/noise.svg')]" />
         </div>
       )}
 
