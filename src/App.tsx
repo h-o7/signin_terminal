@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users, AlertTriangle, RotateCcw, Info, Github } from 'lucide-react';
+import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users, AlertTriangle, RotateCcw, Info, Github, Code } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -49,7 +49,7 @@ export default function App() {
   const [editedUsers, setEditedUsers] = useState<{[username: string]: string}>({});
   const [isSavingUserList, setIsSavingUserList] = useState(false);
   const [reportUser, setReportUser] = useState<string>('all');
-  const [reportStartDate, setReportStartDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [reportStartDate, setReportStartDate] = useState('2026-01-01');
   const [reportEndDate, setReportEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   // Helper to get formatted timezone label with offset
   const getTimezoneLabel = (tz: string, label?: string) => {
@@ -207,6 +207,8 @@ export default function App() {
   const [originalApiSettings, setOriginalApiSettings] = useState<{googleClientId: string, googleClientSecret: string, appUrl: string} | null>(null);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
+  const [isDevDefaultsApplied, setIsDevDefaultsApplied] = useState(false);
+  const [preDevDefaultsSettings, setPreDevDefaultsSettings] = useState<{googleClientId: string, googleClientSecret: string, appUrl: string} | null>(null);
   const [availableUsers, setAvailableUsers] = useState<UserRecord[]>([]);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [isExportingAll, setIsExportingAll] = useState(false);
@@ -404,12 +406,17 @@ export default function App() {
         })
       });
       if (res.ok) {
+        if (isDevDefaultsApplied) {
+          setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Applied DEV_DEFAULTS to API configuration.', type: 'system' }]);
+        }
         alert('API Settings saved successfully. The server has been updated.');
         setOriginalApiSettings({
           googleClientId,
           googleClientSecret,
           appUrl
         });
+        setIsDevDefaultsApplied(false);
+        setPreDevDefaultsSettings(null);
       } else {
         throw new Error('Failed to save settings');
       }
@@ -426,6 +433,8 @@ export default function App() {
     setGoogleClientId(originalApiSettings.googleClientId);
     setGoogleClientSecret(originalApiSettings.googleClientSecret);
     setAppUrl(originalApiSettings.appUrl);
+    setIsDevDefaultsApplied(false);
+    setPreDevDefaultsSettings(null);
     
     // No need to alert here, the fields will just snap back to previous values
   };
@@ -828,6 +837,24 @@ export default function App() {
     } catch (err: any) {
       console.error('Wipe error:', err);
       alert('Failed to clear database: ' + err.message);
+    }
+  };
+
+  const handleDeleteAllUsers = async () => {
+    if (!confirm('DANGER: This will permanently delete ALL registered users. This action cannot be undone. CONTINUE?')) return;
+    
+    try {
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Purging all registered users from database...', type: 'system' }]);
+      const snapshot = await getDocs(collection(db, 'terminals', terminalId, 'mappings'));
+      const batch = writeBatch(db);
+      snapshot.docs.forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+      
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM_PURGE_COMPLETE: User database cleared.', type: 'system' }]);
+      alert('All users have been deleted.');
+    } catch (err: any) {
+      console.error('Purge error:', err);
+      alert('Failed to delete users: ' + err.message);
     }
   };
 
@@ -1591,9 +1618,17 @@ export default function App() {
                 <Users className="text-green-400" size={fontSize === 'large' ? 24 : 20} />
                 <h2 className={cn("font-bold text-white", fontSize === 'large' ? "text-xl" : "text-lg")}>REGISTERED_USERS_DATABASE</h2>
               </div>
-              <button onClick={() => { setShowUserList(false); setEditedUsers({}); }} className="text-green-400 hover:text-green-500 transition-colors">
-                <X size={fontSize === 'large' ? 32 : 24} />
-              </button>
+              <div className="flex items-center gap-4">
+                <button 
+                  onClick={downloadCsvTemplate}
+                  className={cn("text-blue-500 hover:text-blue-400 font-bold transition-colors underline", fontSize === 'large' ? "text-xs" : "text-[10px]")}
+                >
+                  DOWNLOAD_TEMPLATE_CSV
+                </button>
+                <button onClick={() => { setShowUserList(false); setEditedUsers({}); }} className="text-green-400 hover:text-green-500 transition-colors">
+                  <X size={fontSize === 'large' ? 32 : 24} />
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
@@ -1651,6 +1686,13 @@ export default function App() {
 
             <div className="pt-4 border-t border-green-900 shrink-0 flex gap-2">
               <button 
+                onClick={() => fileInputRef.current?.click()}
+                className={cn("flex-1 flex items-center justify-center gap-2 py-3 bg-blue-900/20 border border-blue-900 hover:bg-blue-900/40 text-blue-400 rounded transition-all font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}
+              >
+                <Upload size={16} />
+                IMPORT_USERS_CSV
+              </button>
+              <button 
                 onClick={handleSaveUserList}
                 disabled={isSavingUserList}
                 className={cn(
@@ -1662,14 +1704,21 @@ export default function App() {
                 SAVE_AND_EXIT
               </button>
               <button 
-                onClick={() => { setShowUserList(false); setEditedUsers({}); }}
+                onClick={handleDeleteAllUsers}
                 className={cn(
-                  "flex-1 py-3 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all font-bold",
+                  "flex-1 py-3 border border-red-900 bg-red-900/10 hover:bg-red-900/30 text-red-500 rounded transition-all font-bold",
                   fontSize === 'large' ? "text-sm" : "text-xs"
                 )}
               >
-                CANCEL
+                DELETE_ALL_USERS
               </button>
+              <input 
+                type="file"
+                ref={fileInputRef}
+                onChange={handleImportCSV}
+                className="hidden"
+                accept=".csv"
+              />
             </div>
           </div>
         </div>
@@ -2083,12 +2132,23 @@ export default function App() {
                 </button>
               </div>
               
-              <button 
-                onClick={() => setShowSettings(false)} 
-                className="text-green-400 hover:text-green-500 transition-colors pt-1 shrink-0"
-              >
-                <X size={24} />
-              </button>
+              <div className="flex items-center gap-6 shrink-0 pt-1">
+                <a 
+                  href="https://github.com/h-o7/signin_terminal" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className={cn("flex items-center gap-2 text-green-500/70 hover:text-green-400 transition-colors font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}
+                >
+                  <Github size={12} />
+                  VIEW_SOURCE
+                </a>
+                <button 
+                  onClick={() => setShowSettings(false)} 
+                  className="text-green-400 hover:text-green-500 transition-colors shrink-0"
+                >
+                  <X size={24} />
+                </button>
+              </div>
             </div>
 
             <div className={cn("space-y-3", fontSize === 'large' ? "text-base space-y-5" : "text-sm")}>
@@ -2136,53 +2196,8 @@ export default function App() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
-                    {/* 2. User Management */}
-                    <div className="p-3 bg-green-950/10 border border-green-900/10 rounded space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 group relative cursor-help">
-                          <label className={cn("text-green-400 uppercase font-bold flex items-center gap-1 group-hover:text-green-300 transition-colors", fontSize === 'large' ? "text-sm" : "text-xs")}>
-                            <Users size={14} /> User Mgmt
-                          </label>
-                          <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
-                          <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm border-l-4 border-l-green-600" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
-                            <p className="font-bold border-b border-green-900 pb-1 mb-2 text-green-500 uppercase">IMPORT_PROTOCOL:</p>
-                            <ul className="list-disc pl-4 space-y-1">
-                              <li>FOB_ID: Alphanumeric characters only.</li>
-                              <li>Capacity: MAX_30_CHARACTERS.</li>
-                              <li>Manual Add: Scan/Enter FOB_ID in terminal then edit name in database menu.</li>
-                              {!user && <li className="text-red-500 font-black">ADMIN_LOGIN_REQUIRED_FOR_DATABASE_OPERATIONS</li>}
-                            </ul>
-                          </div>
-                        </div>
-                        <button 
-                          onClick={downloadCsvTemplate}
-                          disabled={!user}
-                          className={cn("text-blue-500 hover:text-blue-400 font-bold transition-colors underline disabled:opacity-30", fontSize === 'large' ? "text-[11px]" : "text-[9px]")}
-                        >
-                          DOWNLOAD_TEMPLATE_CSV
-                        </button>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <button 
-                          onClick={() => fileInputRef.current?.click()}
-                          disabled={!user}
-                          className={cn("w-full flex items-center justify-center gap-2 py-2.5 bg-green-900/20 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
-                        >
-                          <Upload size={16} className="hidden sm:block shrink-0" />
-                          <span className="truncate uppercase">IMPORT_USERS_VIA_CSV</span>
-                        </button>
-                        <input 
-                          type="file"
-                          ref={fileInputRef}
-                          onChange={handleImportCSV}
-                          className="hidden"
-                          accept=".csv"
-                        />
-                      </div>
-                    </div>
-
-                    {/* 3. Data Management */}
-                    <div className="p-3 bg-green-950/10 border border-green-900/10 rounded space-y-2">
+                    {/* Data Management */}
+                    <div className="p-3 bg-green-950/10 border border-green-900/10 rounded space-y-2 col-span-full">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 group relative cursor-help">
                           <label className={cn("text-green-400 uppercase font-bold group-hover:text-green-300 transition-colors", fontSize === 'large' ? "text-sm" : "text-xs")}>Data Mgmt</label>
@@ -2204,29 +2219,50 @@ export default function App() {
                           </div>
                         </div>
                       </div>
-                      <div className="flex flex-col gap-2">
-                        <button 
-                          onClick={handleExportToGoogleDrive}
-                          disabled={!user}
-                          className={cn(
-                            "w-full flex items-center justify-center gap-2 py-2.5 bg-blue-900/20 border border-blue-900 text-blue-400 hover:bg-blue-900/40 rounded transition-all font-bold text-center disabled:opacity-30 disabled:cursor-not-allowed",
-                            fontSize === 'large' ? "text-sm" : "text-xs"
-                          )}
-                        >
-                          <Cloud size={16} className="shrink-0 hidden sm:block" />
-                          <span className="truncate uppercase tracking-tight">{!user ? "(Auth Req)" : (isGDriveConnected ? 'EXPORT_TO_GDRIVE' : 'CONNECT_GDRIVE_&_EXPORT')}</span>
-                        </button>
-                        
-                        {isGDriveConnected && (
+                      <div className="flex gap-2">
+                        <div className="flex-1 flex flex-col gap-2">
                           <button 
-                            onClick={handleDisconnectGoogleDrive}
+                            onClick={handleExportToGoogleDrive}
                             disabled={!user}
-                            className={cn("w-full flex items-center justify-center gap-2 py-2 bg-red-900/10 border border-red-900/50 hover:bg-red-900/30 text-red-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
+                            className={cn(
+                              "w-full flex items-center justify-center gap-2 py-2.5 bg-blue-900/20 border border-blue-900 text-blue-400 hover:bg-blue-900/40 rounded transition-all font-bold text-center disabled:opacity-30 disabled:cursor-not-allowed",
+                              fontSize === 'large' ? "text-sm" : "text-xs"
+                            )}
                           >
-                            <CloudOff size={14} className="hidden sm:block shrink-0" />
-                            <span className="uppercase tracking-tight">DISCONNECT_GDRIVE</span>
+                            <Cloud size={16} className="shrink-0 hidden sm:block" />
+                            <span className="truncate uppercase tracking-tight">{!user ? "(Auth Req)" : (isGDriveConnected ? 'EXPORT_TO_GDRIVE' : 'CONNECT_GDRIVE_&_EXPORT')}</span>
                           </button>
-                        )}
+                          
+                          {isGDriveConnected && (
+                            <button 
+                              onClick={handleDisconnectGoogleDrive}
+                              disabled={!user}
+                              className={cn("w-full flex items-center justify-center gap-2 py-2 bg-red-900/10 border border-red-900/50 hover:bg-red-900/30 text-red-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
+                            >
+                              <CloudOff size={14} className="hidden sm:block shrink-0" />
+                              <span className="uppercase tracking-tight">DISCONNECT_GDRIVE</span>
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="flex-1 relative group">
+                          <button 
+                            disabled={!isGDriveConnected || !user}
+                            onClick={handleClearDatabase}
+                            className={cn("w-full h-full flex items-center justify-center gap-2 py-2.5 bg-red-900/20 border border-red-900 hover:bg-red-900/40 text-red-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
+                          >
+                            <Trash2 size={16} className="hidden sm:block shrink-0" />
+                            <span className="truncate uppercase tracking-tight">
+                              {!user ? "AUTH_REQD" : "CLEAR_DB"}
+                            </span>
+                          </button>
+                          {!isGDriveConnected && user && (
+                            <div className={cn("absolute bottom-full right-0 mb-2 w-80 p-3 bg-red-950/90 border border-red-900 text-red-400 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 font-mono leading-relaxed shadow-[0_0_20px_rgba(239,68,68,0.2)] backdrop-blur-sm border-l-4 border-l-red-600", fontSize === 'large' ? "text-sm" : "text-xs")} style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                              <p className="font-bold border-b border-red-900/50 pb-1 mb-1 text-red-500 uppercase">Wipe_Protocol_Locked:</p>
+                              SYSTEM_LOCKED: Google Drive must be connected for mandatory backup before clearing the database.
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2384,17 +2420,7 @@ export default function App() {
                       </div>
                   </div>
 
-                  <div className="flex justify-center">
-                    <a 
-                      href="https://github.com/h-o7/signin_terminal" 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className={cn("flex items-center gap-2 text-green-500/40 hover:text-green-400 transition-colors font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}
-                    >
-                      <Github size={12} />
-                      VIEW_SOURCE
-                    </a>
-                  </div>
+
                 </div>
               ) : (
                 <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
@@ -2468,7 +2494,7 @@ export default function App() {
                       <Info size={12} className="text-green-500/50 group-hover:text-green-400 transition-colors" />
                       <div className="absolute top-full left-0 mt-2 w-80 p-3 bg-black border border-green-500 text-green-400 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-relaxed border-l-4 border-l-green-600 font-mono shadow-[0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-sm" style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
                         <p className="font-bold border-b border-green-900 pb-1 mb-1 text-green-500 uppercase">Routing_Protocol:</p>
-                        The public URL of this app. In AI Studio, leave this BLANK to use the current URL automatically. If testing locally or via Electron, set to http://localhost:3000 (or http://localhost:4000 for Electron).
+                        The public URL of this app. In AI Studio, leave this BLANK to use the current URL automatically. If testing locally or via Electron, set to http://localhost:3000 (or http://localhost:4000 for Electron). For Firebase URL setup please see GitHub.
                       </div>
                     </div>
                     <input 
@@ -2492,7 +2518,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <button 
                       onClick={handleSaveApiSettings}
                       disabled={isSavingSettings}
@@ -2518,15 +2544,51 @@ export default function App() {
                     </button>
 
                     <button 
+                      onClick={() => {
+                        if (isDevDefaultsApplied && preDevDefaultsSettings) {
+                          // Undo
+                          setGoogleClientId(preDevDefaultsSettings.googleClientId);
+                          setGoogleClientSecret(preDevDefaultsSettings.googleClientSecret);
+                          setAppUrl(preDevDefaultsSettings.appUrl);
+                          setIsDevDefaultsApplied(false);
+                          setPreDevDefaultsSettings(null);
+                          setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: DEV_DEFAULTS changes cancelled.', type: 'system' }]);
+                        } else {
+                          // Apply
+                          setPreDevDefaultsSettings({
+                            googleClientId,
+                            googleClientSecret,
+                            appUrl
+                          });
+                          setGoogleClientId('64052849701-u0oiobrk1e3chhntnhfb5v74polteuje.apps.googleusercontent.com');
+                          setAppUrl('http://localhost:4000');
+                          const envSecret = import.meta.env.VITE_GOOGLE_CLIENT_SECRET;
+                          if (envSecret) setGoogleClientSecret(envSecret);
+                          setIsDevDefaultsApplied(true);
+                        }
+                      }}
+                      className={cn(
+                        "flex items-center justify-center gap-2 py-3 transition-all font-bold rounded",
+                        isDevDefaultsApplied 
+                          ? "bg-red-900/20 border border-red-900/50 hover:bg-red-900/30 text-red-500"
+                          : "bg-amber-900/10 border border-amber-900/50 hover:bg-amber-900/30 text-amber-500",
+                        fontSize === 'large' ? "text-sm" : "text-xs"
+                      )}
+                    >
+                      {isDevDefaultsApplied ? <X size={16} /> : <Code size={16} />}
+                      {isDevDefaultsApplied ? 'CANCEL' : 'USE_DEV_DEFAULTS'}
+                    </button>
+
+                    <button 
                       onClick={handleResetToDefaults}
-                      title="REVERT_TO_LAST_SAVED_CONFIG: Undo any unsaved changes and restore the settings that were active when the app was launched or last saved."
+                      title="REVERT_TO_LAST_SAVED_CONFIG"
                       className={cn(
                         "flex items-center justify-center gap-2 py-3 bg-gray-900/20 border border-gray-800 hover:bg-gray-800/40 text-gray-500 rounded transition-all font-bold",
                         fontSize === 'large' ? "text-sm" : "text-xs"
                       )}
                     >
                       <RotateCcw size={16} />
-                      RESET_DEFAULTS
+                      RESET_DEFAULT
                     </button>
                   </div>
 
@@ -2547,30 +2609,14 @@ export default function App() {
               )}
 
               {/* 4. Bottom Buttons */}
-              <div className="pt-3 border-t border-green-900 flex gap-2">
+              <div className="pt-3 border-t border-green-900 flex">
                 <button 
                   onClick={() => setShowSettings(false)}
-                  className={cn("flex-1 flex items-center justify-center gap-2 py-3 bg-green-900/20 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}
+                  className={cn("w-full flex items-center justify-center gap-2 py-3 bg-green-900/20 border border-green-900 hover:bg-green-900/40 text-green-400 rounded transition-all font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}
                 >
                   <Save size={16} />
                   SAVE_AND_EXIT
                 </button>
-                <div className="flex-1 relative group">
-                  <button 
-                    disabled={!isGDriveConnected || !user}
-                    onClick={handleClearDatabase}
-                    className={cn("w-full flex items-center justify-center gap-2 py-3 bg-red-900/20 border border-red-900 hover:bg-red-900/40 text-red-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
-                  >
-                    <Trash2 size={16} />
-                    {!user ? "ADMIN_LOGIN_REQUIRED" : "CLEAR_DATABASE"}
-                  </button>
-                  {!isGDriveConnected && user && (
-                    <div className={cn("absolute bottom-full left-0 mb-2 w-80 p-3 bg-red-950/90 border border-red-900 text-red-400 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 font-mono leading-relaxed shadow-[0_0_20px_rgba(239,68,68,0.2)] backdrop-blur-sm border-l-4 border-l-red-600", fontSize === 'large' ? "text-sm" : "text-xs")} style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
-                      <p className="font-bold border-b border-red-900/50 pb-1 mb-1 text-red-500 uppercase">Wipe_Protocol_Locked:</p>
-                      SYSTEM_LOCKED: Google Drive must be connected for mandatory backup before clearing the database.
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
           </div>

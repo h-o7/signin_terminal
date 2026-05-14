@@ -51,6 +51,32 @@ The project is already configured with Electron Forge and Vite integration.
 -   **vite.config.ts**: The standard Vite config used when running the web version (`npm run dev`).
 -   **src/electron-main.ts**: The entry point for the desktop application window management.
 
+## Firebase Setup Guide
+
+The application uses Firebase for its database and optionally for hosting. To set up your own Firebase environment:
+
+### 1. Create a Firebase Project
+1.  Go to the [Firebase Console](https://console.firebase.google.com/).
+2.  Click **Add project** and follow the setup wizard.
+3.  Choose your preferred region and enable Google Analytics (optional).
+
+### 2. Configure Firestore Database
+1.  In the Firebase console, go to **Build > Firestore Database**.
+2.  Click **Create database**.
+3.  Select **Start in production mode** (you will secure it with rules later).
+4.  Choose your database location and click **Enable**.
+
+### 3. Acquire your Firebase App URL
+1.  If you use **Firebase Hosting**:
+    -   Go to **Build > Hosting** and click **Get started**.
+    -   Once configured, your URL will be something like `https://your-project-id.web.app`.
+2.  If you are running the app elsewhere (like a custom server or AI Studio):
+    -   Your URL will be provided by your hosting provider.
+3.  **Application Configuration**:
+    -   Open the App Settings (gear icon) -> **API_CONFIG**.
+    -   Paste your hosting URL into the **Standalone App URL** field.
+    -   This URL is used for Google OAuth redirects. Ensure this URL is also added to your **Authorized redirect URIs** in the [Google Cloud Console](https://console.cloud.google.com/).
+
 ## Google Drive Setup Guide
 
 To enable Google Drive export features, you must configure your own Google Cloud OAuth 2.0 credentials. This allows the application to securely save CSV logs to your Drive.
