@@ -1397,14 +1397,29 @@ export default function App() {
   };
 
   const handleDisconnectGoogleDrive = async () => {
-    if (!confirm('Are you sure you want to disconnect Google Drive?')) return;
+    if (!confirm('Are you sure you want to disconnect Google Drive and SIGN OUT of your Google account to clear the session?')) return;
     try {
-      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Disconnecting Google Drive...', type: 'system' }]);
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Disconnecting Google Drive and signing out...', type: 'system' }]);
+      
+      // Perform server-side disconnect (clears our refresh token cookie)
       const res = await fetch('/api/auth/google/disconnect', { method: 'POST' });
+      
       if (res.ok) {
         setIsGDriveConnected(false);
-        setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Google Drive disconnected successfully.', type: 'system' }]);
-        alert('Google Drive disconnected.');
+        
+        // Also sign out of Firebase if they are logged in via Google
+        try {
+          await signOut();
+        } catch (e) {
+          console.error('Signout error:', e);
+        }
+
+        // Open Google logout in a new tab/window to clear the browser session
+        // This is the only reliable way to clear the "Choose an account" list
+        window.open('https://accounts.google.com/Logout', 'google_logout', 'width=500,height=600');
+
+        setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Google Drive disconnected and Sign-out initiated.', type: 'system' }]);
+        alert('Google Drive disconnected. A logout window has been opened to clear your Google accounts from this session. Please close that window when finished.');
       } else {
         throw new Error('Failed to disconnect on server.');
       }

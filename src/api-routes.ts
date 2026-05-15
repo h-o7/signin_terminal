@@ -98,7 +98,7 @@ export function setupApiRoutes(app: express.Express) {
       access_type: 'offline',
       scope: SCOPES,
       redirect_uri: redirectUri,
-      prompt: 'consent'
+      prompt: 'select_account consent'
     });
     res.json({ url });
   });
