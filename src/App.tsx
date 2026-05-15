@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users, AlertTriangle, RotateCcw, Info, Github, Code, ChevronDown } from 'lucide-react';
+import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users, AlertTriangle, RotateCcw, Info, Github, Code, ChevronDown, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -131,6 +131,7 @@ export default function App() {
     localStorage.getItem('terminal_shutdown_time') || '19:00'
   );
   const [isSystemShutdown, setIsSystemShutdown] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [shutdownCountdown, setShutdownCountdown] = useState(60);
 
   // Shutdown countdown timer logic
@@ -1466,20 +1467,28 @@ export default function App() {
       return;
     }
 
-    const result = await performGoogleDriveExport();
-    if (result.success) {
-      if (result.webViewLink) {
-        const openLink = confirm(`Data exported successfully to Google Drive!\n\nWould you like to view the file now?`);
-        if (openLink) {
-          window.open(result.webViewLink, '_blank');
+    setIsExporting(true);
+    try {
+      const result = await performGoogleDriveExport();
+      if (result.success) {
+        if (result.webViewLink) {
+          const openLink = confirm(`Data exported successfully to Google Drive!\n\nWould you like to view the file now?`);
+          if (openLink) {
+            window.open(result.webViewLink, '_blank');
+          }
+        } else {
+          alert('Data exported successfully to Google Drive!');
         }
       } else {
-        alert('Data exported successfully to Google Drive!');
+        if (result.error !== 'Not connected') {
+          alert(`Export failed: ${result.error}`);
+        }
       }
-    } else {
-      if (result.error !== 'Not connected') {
-        alert(`Export failed: ${result.error}`);
-      }
+    } catch (error) {
+      console.error('Export Error:', error);
+      alert(`Export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -2480,15 +2489,25 @@ export default function App() {
                       <div className="flex items-center gap-2">
                         <button 
                           onClick={handleExportToGoogleDrive}
-                          disabled={!user}
-                          title="Export all terminal session logs to Google Drive"
+                          disabled={!user || isExporting}
+                          title={isExporting ? "Exporting logs..." : "Export all terminal session logs to Google Drive"}
                           className={cn(
                             "flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-900/20 border border-blue-900 text-blue-400 hover:bg-blue-900/40 rounded transition-all font-bold text-center disabled:opacity-30 disabled:cursor-not-allowed",
-                            fontSize === 'large' ? "text-sm" : "text-xs"
+                            fontSize === 'large' ? "text-sm" : "text-xs",
+                            isExporting && "animate-pulse"
                           )}
                         >
-                          <Cloud size={16} className="shrink-0 hidden sm:block" />
-                          <span className="truncate uppercase tracking-tight">{!user ? "(Auth Req)" : (isGDriveConnected ? 'EXPORT_TO_GDRIVE' : 'CONNECT_GDRIVE_&_EXPORT')}</span>
+                          {isExporting ? (
+                            <>
+                              <Loader2 size={16} className="animate-spin shrink-0" />
+                              <span className="truncate uppercase tracking-tight">EXPORTING...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Cloud size={16} className="shrink-0 hidden sm:block" />
+                              <span className="truncate uppercase tracking-tight">{!user ? "(Auth Req)" : (isGDriveConnected ? 'EXPORT_TO_GDRIVE' : 'CONNECT_GDRIVE_&_EXPORT')}</span>
+                            </>
+                          )}
                         </button>
                         
                         {!isGDriveConnected && user && (
