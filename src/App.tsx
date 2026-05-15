@@ -809,6 +809,36 @@ export default function App() {
     }
   };
 
+  const handleWipeGoogleSession = async () => {
+    const msg = "This will sign you out of ALL Google accounts in this browser to clear the 'Choose an account' list. \n\n" +
+                "Any current drive connection will be terminated. \n\n" +
+                "Proceed with session wipe?";
+    if (!confirm(msg)) return;
+    
+    try {
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Initiating total session wipe...', type: 'system' }]);
+      
+      // Clear server-side session too if possible
+      await fetch('/api/auth/google/disconnect', { method: 'POST' }).catch(() => {});
+      setIsGDriveConnected(false);
+
+      // Sign out of Firebase
+      try {
+        await signOut();
+      } catch (e) {
+        console.error('Signout error:', e);
+      }
+
+      // Open Google's global logout page
+      window.open('https://accounts.google.com/Logout', 'google_logout', 'width=500,height=600');
+
+      setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Sign-out window opened. Return here once finished.', type: 'system' }]);
+      alert('A Google logout window has been opened. Please complete the logout in that window to clear the account list, then come back here.');
+    } catch (error) {
+      console.error('Wipe error:', error);
+    }
+  };
+
   const performGoogleDriveExport = async () => {
     if (!isGDriveConnected) {
       handleConnectGoogleDrive();
@@ -2455,6 +2485,17 @@ export default function App() {
                           <Cloud size={16} className="shrink-0 hidden sm:block" />
                           <span className="truncate uppercase tracking-tight">{!user ? "(Auth Req)" : (isGDriveConnected ? 'EXPORT_TO_GDRIVE' : 'CONNECT_GDRIVE_&_EXPORT')}</span>
                         </button>
+                        
+                        {!isGDriveConnected && user && (
+                          <button 
+                            onClick={handleWipeGoogleSession}
+                            title="Sign out of all Google accounts to clear the 'Choose an account' list"
+                            className={cn("flex-1 flex items-center justify-center gap-2 py-2.5 bg-red-950/20 border border-red-900/50 hover:bg-red-900/40 text-red-400 rounded transition-all font-bold", fontSize === 'large' ? "text-sm" : "text-xs")}
+                          >
+                            <UserIcon size={14} className="shrink-0" />
+                            <span className="uppercase tracking-tight whitespace-nowrap">LOGOUT_GOOGLE_ACCOUNT</span>
+                          </button>
+                        )}
                         
                         {isGDriveConnected && (
                           <button 
