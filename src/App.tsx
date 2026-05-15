@@ -811,8 +811,7 @@ export default function App() {
 
   const handleWipeGoogleSession = async () => {
     const msg = "This will sign you out of ALL Google accounts in this browser to clear the 'Choose an account' list. \n\n" +
-                "Any current drive connection will be terminated. \n\n" +
-                "Proceed with session wipe?";
+                "Proceed with logout?";
     if (!confirm(msg)) return;
     
     try {
@@ -1427,7 +1426,9 @@ export default function App() {
   };
 
   const handleDisconnectGoogleDrive = async () => {
-    if (!confirm('Are you sure you want to disconnect Google Drive and SIGN OUT of your Google account to clear the session?')) return;
+    const msg = "This will disconnect Google Drive and sign you out of ALL Google accounts in this browser to clear the 'Choose an account' list. \n\n" +
+                "Proceed with logout?";
+    if (!confirm(msg)) return;
     try {
       setLogs(prev => [...prev, { id: Date.now().toString(), timestamp: new Date(), message: 'SYSTEM: Disconnecting Google Drive and signing out...', type: 'system' }]);
       
@@ -1657,7 +1658,7 @@ export default function App() {
                   <Settings size={fontSize === 'large' ? 22 : 18} />
                 </button>
               </div>
-              <button onClick={signOut} className={cn("border border-red-900 px-2 py-1 hover:bg-red-900/20 text-red-700 rounded font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}>LOGOUT</button>
+              <button title="Does not clear cache or cookies" onClick={signOut} className={cn("border border-red-900 px-2 py-1 hover:bg-red-900/20 text-red-700 rounded font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}>LOGOUT</button>
             </div>
           ) : (
             <div className="flex items-center gap-2">
@@ -2250,6 +2251,7 @@ export default function App() {
                   href="https://github.com/h-o7/signin_terminal" 
                   target="_blank" 
                   rel="noopener noreferrer"
+                  title="https://github.com/h-o7/signin_terminal"
                   className={cn("flex items-center gap-2 text-green-500/70 hover:text-green-400 transition-colors font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}
                 >
                   <Github size={12} />
@@ -2477,6 +2479,7 @@ export default function App() {
                         <button 
                           onClick={handleExportToGoogleDrive}
                           disabled={!user}
+                          title="Export all terminal session logs to Google Drive"
                           className={cn(
                             "flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-900/20 border border-blue-900 text-blue-400 hover:bg-blue-900/40 rounded transition-all font-bold text-center disabled:opacity-30 disabled:cursor-not-allowed",
                             fontSize === 'large' ? "text-sm" : "text-xs"
@@ -2501,10 +2504,11 @@ export default function App() {
                           <button 
                             onClick={handleDisconnectGoogleDrive}
                             disabled={!user}
+                            title="Sign out of all Google accounts to clear the 'Choose an account' list"
                             className={cn("flex-1 flex items-center justify-center gap-2 py-2.5 bg-red-900/10 border border-red-900/50 hover:bg-red-900/30 text-red-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", fontSize === 'large' ? "text-sm" : "text-xs")}
                           >
                             <CloudOff size={14} className="hidden sm:block shrink-0" />
-                            <span className="uppercase tracking-tight">DISCONNECT_GDRIVE</span>
+                            <span className="uppercase tracking-tight">LOGOUT_GOOGLE_ACCOUNT</span>
                           </button>
                         )}
                       </div>
