@@ -10,7 +10,7 @@ import Papa from 'papaparse';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 
-const TERMINAL_VERSION = "CMD_TERMINAL_V2.3";
+const TERMINAL_VERSION = "CMD_TERMINAL_V2.4";
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -874,7 +874,7 @@ export default function App() {
           message: `SYSTEM: Backup successful. File ID: ${result.fileId}`, 
           type: 'system' 
         }]);
-        return { success: true, fileId: result.fileId };
+        return { success: true, fileId: result.fileId, webViewLink: result.webViewLink };
       } else {
         const errData = await res.json();
         throw new Error(errData.error || `Server error (${res.status})`);
@@ -1468,11 +1468,13 @@ export default function App() {
 
     const result = await performGoogleDriveExport();
     if (result.success) {
-      const openLink = confirm(`Data exported successfully to Google Drive!\n\nWould you like to view the file now?`);
-      if (openLink && result.fileId) {
-        // Result ID is enough to build the link usually, but my helper only returns fileId
-        // I'll just skip the auto-open for now or fetch the link if possible.
-        // Actually, let's just use the helper's success message.
+      if (result.webViewLink) {
+        const openLink = confirm(`Data exported successfully to Google Drive!\n\nWould you like to view the file now?`);
+        if (openLink) {
+          window.open(result.webViewLink, '_blank');
+        }
+      } else {
+        alert('Data exported successfully to Google Drive!');
       }
     } else {
       if (result.error !== 'Not connected') {

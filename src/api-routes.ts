@@ -217,8 +217,39 @@ export function setupApiRoutes(app: express.Express) {
       client.setCredentials({ refresh_token: refreshToken });
       const drive = google.drive({ version: 'v3', auth: client });
 
+      // Ensure backup folder exists
+      let folderId: string | undefined;
+      try {
+        const folderName = 'Terminal_Backups';
+        const folderRes = await drive.files.list({
+          q: `name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+          fields: 'files(id)',
+          spaces: 'drive',
+        });
+
+        if (folderRes.data.files && folderRes.data.files.length > 0) {
+          folderId = folderRes.data.files[0].id!;
+        } else {
+          const folderMetadata = {
+            name: folderName,
+            mimeType: 'application/vnd.google-apps.folder',
+          };
+          const folder = await drive.files.create({
+            requestBody: folderMetadata,
+            fields: 'id',
+          });
+          folderId = folder.data.id!;
+        }
+      } catch (e) {
+        console.warn('[GDRIVE] Failed to ensure folder exists, using root:', e);
+      }
+
       const file = await drive.files.create({
-        requestBody: { name: fileName, mimeType: 'text/csv' },
+        requestBody: { 
+          name: fileName, 
+          mimeType: 'text/csv',
+          parents: folderId ? [folderId] : []
+        },
         media: { mimeType: 'text/csv', body: csvData },
         fields: 'id, name, webViewLink',
       });
