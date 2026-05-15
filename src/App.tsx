@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users, AlertTriangle, RotateCcw, Info, Github, Code, ChevronDown, Loader2 } from 'lucide-react';
+import { Terminal as TerminalIcon, LogIn, LogOut, Shield, Activity, Database, Cpu, Settings, X, Upload, Download, Cloud, CloudOff, Trash2, Save, FileSpreadsheet, Calendar, User as UserIcon, Search, Users, AlertTriangle, RotateCcw, Info, Github, Code, ChevronDown, Loader2, ExternalLink } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -2445,6 +2445,30 @@ export default function App() {
                         </div>
                         
                         <div className="flex items-center gap-4">
+                          {/* Open Google Drive */}
+                          <div className="relative group">
+                            <button 
+                              disabled={!isGDriveConnected || !user}
+                              onClick={() => window.open('https://drive.google.com/drive/search?q=Terminal_Backups', '_blank')}
+                              className={cn(
+                                "flex items-center gap-1.5 px-2 py-1 bg-blue-900/10 border border-blue-900/50 hover:bg-blue-900/30 text-blue-500 rounded transition-all font-bold disabled:opacity-30 disabled:cursor-not-allowed", 
+                                fontSize === 'large' ? "text-[10px]" : "text-[9px]"
+                              )}
+                              title="Open Terminal_Backups folder in Google Drive"
+                            >
+                              <ExternalLink size={12} className="shrink-0" />
+                              <span className="uppercase tracking-widest">
+                                OPEN_GDRIVE
+                              </span>
+                            </button>
+                            {isGDriveConnected && user && (
+                              <div className={cn("absolute top-full left-0 mt-2 w-64 p-3 bg-black border border-blue-600 text-blue-400 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 font-mono leading-relaxed shadow-[0_0_20px_rgba(59,130,246,0.2)] backdrop-blur-sm border-l-4 border-l-blue-600", fontSize === 'large' ? "text-sm" : "text-xs")} style={{ fontSize: fontSize === 'large' ? '14px' : '12px' }}>
+                                <p className="font-bold border-b border-blue-900/50 pb-1 mb-1 text-blue-500 uppercase">Access_Protocol:</p>
+                                Opens your Google Drive to view and manage your terminal backup archives.
+                              </div>
+                            )}
+                          </div>
+
                           {/* Clear Database - Smaller version moved here */}
                           <div className="relative group">
                             <button 
