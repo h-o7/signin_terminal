@@ -40,7 +40,7 @@ interface UserStatusMap {
 }
 
 export default function App() {
-  const [isStarted, setIsStarted] = useState(false);
+  const [isStarted, setIsStarted] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -383,11 +383,6 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
-      if (u) {
-        setIsStarted(true);
-      } else {
-        setIsStarted(false);
-      }
       setIsAuthReady(true);
     });
     return () => unsubscribe();
@@ -1683,7 +1678,7 @@ export default function App() {
               <button onClick={signIn} className={cn("bg-green-900/40 px-3 py-1 text-green-400 hover:bg-green-400 hover:text-black transition-colors rounded font-bold", fontSize === 'large' ? "text-xs" : "text-[10px]")}>ADMIN_LOGIN</button>
             </div>
           )}
-          <button onClick={() => setIsStarted(false)} className={cn("border border-green-900 px-2 py-1 hover:bg-green-900/20 rounded font-bold ml-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>EXIT</button>
+          <button onClick={() => window.close()} className={cn("border border-green-900 px-2 py-1 hover:bg-green-900/20 rounded font-bold ml-1", fontSize === 'large' ? "text-xs" : "text-[10px]")}>EXIT</button>
         </div>
       </div>
 

@@ -11,6 +11,36 @@
     <script>
       console.log("[SYSTEM] HTML_LOADED", window.location.href);
       console.log("[SYSTEM] BASE_URI", document.baseURI);
+
+      // Auto-retry resource loads if they fail (e.g. on temporary net::ERR_NETWORK_CHANGED)
+      window.addEventListener('error', function(e) {
+        var target = e.target;
+        if (target && (target.tagName === 'LINK' || target.tagName === 'SCRIPT')) {
+          var srcAttr = target.tagName === 'LINK' ? 'href' : 'src';
+          var url = target[srcAttr];
+          console.warn('[SYSTEM] Resource load failed:', url);
+          
+          // Check if we've already tried reloading this page to avoid infinite loops
+          var reloadCount = parseInt(sessionStorage.getItem('asset_reload_count') || '0', 10);
+          if (reloadCount < 3) {
+            sessionStorage.setItem('asset_reload_count', (reloadCount + 1).toString());
+            console.log('[SYSTEM] Attempting full page reload to recover assets... Attempt:', reloadCount + 1);
+            setTimeout(function() {
+              window.location.reload();
+            }, 3000);
+          } else {
+            console.error('[SYSTEM] Exceeded maximum resource reload count. Please check your network connection.');
+          }
+        }
+      }, true); // true handles the capturing phase for resource element elements
+
+      // Reset reload count once the app successfully finishes loading
+      window.addEventListener('load', function() {
+        setTimeout(function() {
+          sessionStorage.removeItem('asset_reload_count');
+        }, 3000);
+      });
+
       window.onerror = function(msg, url, lineNo, columnNo, error) {
         console.error("[SYSTEM] RUNTIME_ERROR", msg, url, lineNo);
         var div = document.createElement('div');

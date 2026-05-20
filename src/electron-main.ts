@@ -78,8 +78,20 @@ function createWindow() {
         res.sendFile(indexPath);
       });
 
+      mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+        console.error(`[SERVER] Failed to load URL: ${validatedURL} (${errorCode}: ${errorDescription})`);
+        if (validatedURL.includes('localhost') || validatedURL.includes('127.0.0.1')) {
+          const dialog = (import('electron')).then(({ dialog }) => {
+            dialog.showErrorBox('Local Server Error', `Failed to load app from local server.\nError: ${errorDescription}\nFalling back to file://`);
+          });
+          mainWindow.loadFile(path.join(staticPath, 'index.html'));
+        }
+      });
+
       server = expressApp.listen(PORT, '127.0.0.1', () => {
-        console.log(`[SERVER] Local server running on http://localhost:${PORT}`);
+        console.log(`[SERVER] Local server running on http://127.0.0.1:${PORT}`);
+        // Load the local server URL now that Express is fully listening
+        mainWindow.loadURL(`http://127.0.0.1:${PORT}`);
       });
 
       server.on('error', (e: any) => {
@@ -87,18 +99,6 @@ function createWindow() {
         if (e.code === 'EADDRINUSE') {
           console.log('[SERVER] Port in use, trying fallback...');
           // In a real app, we might try another port, but 4000 is likely ok
-        }
-      });
-
-      mainWindow.loadURL(`http://localhost:${PORT}`);
-      
-      mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
-        console.error(`[SERVER] Failed to load URL: ${validatedURL} (${errorCode}: ${errorDescription})`);
-        if (validatedURL.includes('localhost')) {
-          const dialog = (import('electron')).then(({ dialog }) => {
-            dialog.showErrorBox('Local Server Error', `Failed to load app from localhost:4000.\nError: ${errorDescription}\nFalling back to file://`);
-          });
-          mainWindow.loadFile(path.join(staticPath, 'index.html'));
         }
       });
     } catch (error: any) {
