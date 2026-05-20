@@ -90,8 +90,8 @@ function createWindow() {
 
       server = expressApp.listen(PORT, '127.0.0.1', () => {
         console.log(`[SERVER] Local server running on http://127.0.0.1:${PORT}`);
-        // Load the local server URL now that Express is fully listening
-        mainWindow.loadURL(`http://127.0.0.1:${PORT}`);
+        // Load the local server URL now that Express is fully listening via localhost for Firebase Authentication compliance
+        mainWindow.loadURL(`http://localhost:${PORT}`);
       });
 
       server.on('error', (e: any) => {
