@@ -10,7 +10,7 @@ import Papa from 'papaparse';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 
-const TERMINAL_VERSION = "CMD_TERMINAL_V2.4";
+const TERMINAL_VERSION = "CMD_TERMINAL_V2.5";
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
